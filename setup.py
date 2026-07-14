@@ -23,6 +23,7 @@ setup(
             "surflifegen-highalt=surflifegen.highalt_cli:main",
             "surflifegen-highway=surflifegen.highway_cli:main",
             "surflifegen-segment=surflifegen.segment_cli:main",
+            "surflifegen-urban=surflifegen.urban_cli:main",
             "surflifegen-yolo-export=surflifegen.yolo_cli:main",
         ],
     },
