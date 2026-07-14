@@ -136,7 +136,8 @@ class UrbanYoloAutoTrainer:
             output_dir=self.export_dir,
             mode="segment",
             split_ratio=0.8,
-            use_symlinks=False
+            copy_images=True,
+            class_mapping={cls_name: idx for idx, cls_name in enumerate(self.classes)}
         )
         data_yaml_path = exporter.export()
         print(f"[AutoTrainer] ✅ YOLO segmentation dataset exported to: {self.export_dir}")

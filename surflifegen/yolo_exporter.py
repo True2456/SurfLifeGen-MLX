@@ -175,8 +175,17 @@ class YoloDatasetExporter:
         train_files = shuffled[:split_idx]
         val_files = shuffled[split_idx:]
 
-        # Map clean filenames to their JSON record if available
-        record_map = {os.path.basename(r.get("clean_file", "")): r for r in records if isinstance(r, dict)}
+        # Map clean filenames and IDs to their JSON record
+        record_map = {}
+        for r in records:
+            if not isinstance(r, dict):
+                continue
+            if "clean_file" in r and r["clean_file"]:
+                record_map[os.path.basename(r["clean_file"])] = r
+            if "image_path" in r and r["image_path"]:
+                record_map[os.path.basename(r["image_path"])] = r
+            if "image_id" in r and r["image_id"]:
+                record_map[str(r["image_id"])] = r
 
         converted_count = 0
         total_labels = 0
@@ -202,19 +211,29 @@ class YoloDatasetExporter:
                 w, h = img_pil.size
 
                 label_lines = []
+                rec = record_map.get(fname, record_map.get(base_no_ext, {}))
 
-                # Check if segmentation mode and a corresponding _mask.png exists
-                mask_path = os.path.join(self.dataset_dir, f"{base_no_ext}_mask.png")
-                if is_seg_mode and os.path.exists(mask_path):
-                    # For mask files from segmenter.py
-                    rec = record_map.get(fname, {})
+                # Case 1: urban_segmentations.json structure (`instances` with polygon or box)
+                if rec and "instances" in rec:
+                    for inst in rec["instances"]:
+                        cls_id = inst.get("class_id", 0)
+                        poly = inst.get("polygon", [])
+                        if is_seg_mode and poly and len(poly) >= 3:
+                            poly_str = " ".join([f"{pt[0]:.6f} {pt[1]:.6f}" for pt in poly])
+                            label_lines.append(f"{cls_id} {poly_str}")
+                        elif "box" in inst and inst["box"] and len(inst["box"]) == 4:
+                            cx, cy, bw, bh = self._convert_box_to_yolo(inst["box"], w, h)
+                            label_lines.append(f"{cls_id} {cx:.6f} {cy:.6f} {bw:.6f} {bh:.6f}")
+                # Case 2: old binary _mask.png files from single-class segmenter.py
+                elif is_seg_mode and os.path.exists(os.path.join(self.dataset_dir, f"{base_no_ext}_mask.png")):
+                    mask_path = os.path.join(self.dataset_dir, f"{base_no_ext}_mask.png")
                     class_id = 0
                     if rec and "detections" in rec and rec["detections"]:
                         class_id = self.resolve_class_id(str(rec["detections"][0].get("label", "crack")))
                     label_lines = self._extract_polygon_from_mask(mask_path, class_id=class_id)
-                elif fname in record_map and "detections" in record_map[fname]:
-                    # Convert bounding boxes from JSON
-                    for det in record_map[fname]["detections"]:
+                # Case 3: old segmentations.json detections array
+                elif rec and "detections" in rec:
+                    for det in rec["detections"]:
                         box = det.get("box")
                         if not box or len(box) != 4:
                             continue
@@ -222,8 +241,8 @@ class YoloDatasetExporter:
                         class_id = self.resolve_class_id(label_str)
                         cx, cy, bw, bh = self._convert_box_to_yolo(box, w, h)
                         label_lines.append(f"{class_id} {cx:.6f} {cy:.6f} {bw:.6f} {bh:.6f}")
+                # Case 4: look for existing TXT file
                 else:
-                    # Look for existing TXT file with the same name if JSON isn't present
                     existing_txt = os.path.join(self.dataset_dir, f"{base_no_ext}.txt")
                     if os.path.exists(existing_txt):
                         with open(existing_txt, "r") as et:
