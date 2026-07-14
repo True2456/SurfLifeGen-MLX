@@ -20,6 +20,7 @@ setup(
             "surflifegen=surflifegen.cli:main",
             "surflifegen-verify=surflifegen.verify_cli:main",
             "surflifegen-dino=surflifegen.dino_cli:main",
+            "surflifegen-highalt=surflifegen.highalt_cli:main",
         ],
     },
     python_requires=">=3.10",
