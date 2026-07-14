@@ -1,6 +1,7 @@
 """
 Apple Silicon Native Vision-Language Model (VLM) Bounding Box Verifier & Corrector
 Uses Qwen2.5-VL / Qwen3-VL (via mlx-vlm) to visually inspect, verify, and correct bounding box tags.
+Exhaustively detects all multiple swimmers or submerged sharks across the entire image frame.
 """
 
 import os
@@ -38,8 +39,8 @@ class VLMTagVerifier:
 
     def detect_targets_vlm(self, image_path: str, target_type: str = "swimmer") -> Tuple[List[Tuple[int, int, int, int]], str]:
         """
-        Asks Qwen VL to detect all swimmers or submerged sharks in the image.
-        Formats prompt with proper chat template tokens (<|vision_start|><|image_pad|><|vision_end|>).
+        Asks Qwen VL to detect ALL swimmers or submerged sharks in the image.
+        Formats prompt with explicit multi-object instructions and chat template tokens.
         Returns a tuple of (list of [xmin, ymin, xmax, ymax] pixel coordinates, raw_response_text).
         """
         img = Image.open(image_path).convert("RGB")
@@ -47,13 +48,15 @@ class VLMTagVerifier:
 
         if target_type == "shark":
             instruction = (
-                "Locate every submerged shark silhouette under the water in this image. "
-                "Output bounding box coordinates for each shark in format <|box_start|>(ymin,xmin),(ymax,xmax)<|box_end|> or [ymin, xmin, ymax, xmax] normalized from 0 to 1000."
+                "Scan this entire aerial Search and Rescue nadir ocean photograph from edge to edge. "
+                "Detect and locate EVERY single submerged shark silhouette under the water. Do not miss any shark. "
+                "Output bounding box coordinates for each shark in format <|box_start|>(ymin,xmin),(ymax,xmax)<|box_end|>."
             )
         else:
             instruction = (
-                "Locate every human swimmer floating or treading water in this ocean photograph. "
-                "Output bounding box coordinates for each swimmer in format <|box_start|>(ymin,xmin),(ymax,xmax)<|box_end|> or [ymin, xmin, ymax, xmax] normalized from 0 to 1000."
+                "Scan this entire aerial Search and Rescue nadir ocean photograph from edge to edge. "
+                "Detect and locate EVERY single human swimmer floating or treading water across the whole image (even if there are multiple swimmers). Do not miss any swimmer. "
+                "Output bounding box coordinates for each swimmer in format <|box_start|>(ymin,xmin),(ymax,xmax)<|box_end|>."
             )
 
         messages = [
@@ -73,7 +76,7 @@ class VLMTagVerifier:
             self.processor,
             image=image_path,
             prompt=formatted_prompt,
-            max_tokens=256,
+            max_tokens=384,
             temperature=0.1
         )
 

@@ -1,7 +1,7 @@
 """
 Command Line Interface for SurfLifeGen-MLX
 Supports safe auto-incrementing filenames, real-time per-image metadata saving,
-and target selection (--target swimmer OR --target shark).
+and exhaustive multi-target annotation (--target swimmer OR --target shark).
 """
 
 import os
@@ -44,7 +44,7 @@ def main():
     parser.add_argument("--auto-download", action="store_true", default=True, help="Automatically download model from Hugging Face Hub if not found locally")
     parser.add_argument("--steps", "-s", type=int, default=25, help="Number of MLX inference steps per image (default: 25)")
     parser.add_argument("--prompt", "-p", type=str, default=None, help="Custom prompt to generate a single image")
-    parser.add_argument("--count", "-c", type=int, default=1, help="Expected target count for custom prompt annotation")
+    parser.add_argument("--count", "-c", type=int, default=100, help="Max target count for custom prompt annotation")
     parser.add_argument("--bulk-count", "-n", type=int, default=None, help="Generate X amount of images using modular randomized prompt builder")
     parser.add_argument("--no-annotate", action="store_true", help="Skip automatic YOLO bounding box annotation")
 
@@ -86,7 +86,7 @@ def main():
             else:
                 mod = generate_modular_prompt()
             filename = f"{prefix}{idx:04d}_alt{mod['altitude_m']}m.png"
-            target_cnt = mod.get("shark_count", mod.get("swimmer_count", 1))
+            target_cnt = mod.get("shark_count", mod.get("swimmer_count", 100))
             prompts.append((filename, mod["prompt"], target_cnt, mod))
     elif args.prompt:
         prompts = [("custom_generation.png", args.prompt, args.count, None)]
@@ -108,7 +108,7 @@ def main():
             metadata.append(mod_meta)
 
         if annotator:
-            ann = annotator.annotate_image(out_path, target_count=count)
+            ann = annotator.annotate_image(out_path, target_count=count, target_type=args.target)
             annotations.append(ann)
             print(f"  -> Annotated {len(ann['detections'])} {args.target}(s): {ann['yolo_label_file']}")
 

@@ -1,7 +1,8 @@
 """
-Precision Automated Swimmer Bounding Box Annotator for Surf Life Saving datasets.
-Combines adaptive background color contrast, high-visibility swimwear detection,
-and size-normalized scoring so swimmers are always prioritized over large ocean patches.
+Precision Automated Bounding Box Annotator for Surf Life Saving datasets.
+Supports multi-target detection for both Swimmers (high-visibility vests & wetsuits)
+and Submerged Sharks (dark subsurface fusiform silhouettes against turquoise water).
+Detects ALL valid targets in the frame rather than capping at 1.
 """
 
 import os
@@ -18,72 +19,88 @@ class PrecisionSwimmerAnnotator:
         os.makedirs(self.previews_dir, exist_ok=True)
 
     @staticmethod
-    def detect_swimmers(img_bgr: np.ndarray, target_count: int = 1) -> List[Tuple[int, int, int, int]]:
+    def detect_targets(img_bgr: np.ndarray, target_type: str = "swimmer", min_score: float = 12.0) -> List[Tuple[int, int, int, int]]:
+        """
+        Detects all swimmers or submerged sharks in an aerial nadir image.
+        Returns a list of [xmin, ymin, xmax, ymax] boxes for every detected target.
+        """
         h, w = img_bgr.shape[:2]
         hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
         lab = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2Lab)
-
-        # 1. High-visibility rescue colors (red, orange, yellow rash vests & caps)
-        mask_warm1 = cv2.inRange(hsv, np.array([0, 50, 50]), np.array([32, 255, 255]))
-        mask_warm2 = cv2.inRange(hsv, np.array([158, 50, 50]), np.array([180, 255, 255]))
-        mask_warm = cv2.bitwise_or(mask_warm1, mask_warm2)
-
-        # 2. Chromatic distance from median background ocean color
-        median_a = np.median(lab[:, :, 1])
-        median_b = np.median(lab[:, :, 2])
-        chroma_diff = np.sqrt((lab[:, :, 1].astype(float) - median_a)**2 + (lab[:, :, 2].astype(float) - median_b)**2)
-        chroma_mask = (chroma_diff > 16.0).astype(np.uint8) * 255
-
-        # 3. Morphological Tophat (bright foreground) & Blackhat (dark wetsuits)
         gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
-        blur = cv2.GaussianBlur(gray, (7, 7), 0)
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (25, 25))
-        tophat = cv2.morphologyEx(blur, cv2.MORPH_TOPHAT, kernel)
-        blackhat = cv2.morphologyEx(blur, cv2.MORPH_BLACKHAT, kernel)
-        _, mask_th = cv2.threshold(tophat, 30, 255, cv2.THRESH_BINARY)
-        _, mask_bh = cv2.threshold(blackhat, 30, 255, cv2.THRESH_BINARY)
 
-        saliency = cv2.bitwise_or(mask_warm, cv2.bitwise_or(chroma_mask, cv2.bitwise_or(mask_th, mask_bh)))
+        # 1. Suppress white seafoam / breaking wave foam
+        seafoam_mask = cv2.inRange(hsv, np.array([0, 0, 215]), np.array([180, 45, 255]))
 
-        # 4. Suppress low-saturation white seafoam / whitecaps
-        seafoam_mask = cv2.inRange(hsv, np.array([0, 0, 215]), np.array([180, 42, 255]))
-        saliency[seafoam_mask > 0] = 0
+        if target_type == "shark":
+            # Submerged sharks: dark fusiform silhouettes below clear water
+            blur = cv2.GaussianBlur(gray, (15, 15), 0)
+            kernel_bg = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (45, 45))
+            blackhat = cv2.morphologyEx(blur, cv2.MORPH_BLACKHAT, kernel_bg)
+            
+            _, saliency = cv2.threshold(blackhat, 14, 255, cv2.THRESH_BINARY)
+            saliency[seafoam_mask > 0] = 0
+            
+            kernel_clean = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9))
+            closed = cv2.morphologyEx(saliency, cv2.MORPH_CLOSE, kernel_clean)
+        else:
+            # Swimmers: warm lifeguard vests (red/orange/yellow) OR dark wetsuits/skin contrast
+            mask_warm1 = cv2.inRange(hsv, np.array([0, 55, 55]), np.array([32, 255, 255]))
+            mask_warm2 = cv2.inRange(hsv, np.array([158, 55, 55]), np.array([180, 255, 255]))
+            mask_warm = cv2.bitwise_or(mask_warm1, mask_warm2)
 
-        kernel_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15, 15))
-        closed = cv2.morphologyEx(saliency, cv2.MORPH_CLOSE, kernel_close)
+            median_a = np.median(lab[:, :, 1])
+            median_b = np.median(lab[:, :, 2])
+            chroma_diff = np.sqrt((lab[:, :, 1].astype(float) - median_a)**2 + (lab[:, :, 2].astype(float) - median_b)**2)
+            chroma_mask = (chroma_diff > 14.0).astype(np.uint8) * 255
+
+            blur = cv2.GaussianBlur(gray, (7, 7), 0)
+            kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (25, 25))
+            tophat = cv2.morphologyEx(blur, cv2.MORPH_TOPHAT, kernel)
+            blackhat = cv2.morphologyEx(blur, cv2.MORPH_BLACKHAT, kernel)
+            _, mask_th = cv2.threshold(tophat, 25, 255, cv2.THRESH_BINARY)
+            _, mask_bh = cv2.threshold(blackhat, 25, 255, cv2.THRESH_BINARY)
+
+            saliency = cv2.bitwise_or(mask_warm, cv2.bitwise_or(chroma_mask, cv2.bitwise_or(mask_th, mask_bh)))
+            saliency[seafoam_mask > 0] = 0
+
+            kernel_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (11, 11))
+            closed = cv2.morphologyEx(saliency, cv2.MORPH_CLOSE, kernel_close)
 
         contours, _ = cv2.findContours(closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
         candidates = []
         for cnt in contours:
             area = cv2.contourArea(cnt)
-            # Swimmers at 40m-100m are compact (80 to 8000 pixels)
-            if 80 <= area <= 8500:
+            min_area = 120 if target_type == "shark" else 60
+            max_area = 16000 if target_type == "shark" else 9500
+
+            if min_area <= area <= max_area:
                 x, y, bw, bh = cv2.boundingRect(cnt)
                 aspect = max(bw, bh) / max(1.0, min(bw, bh))
-                if aspect <= 2.6:
-                    roi_warm = mask_warm[y:y+bh, x:x+bw]
-                    warm_density = np.sum(roi_warm > 0) / float(max(1, bw * bh))
-                    
-                    roi_saliency = saliency[y:y+bh, x:x+bw]
-                    sal_density = np.sum(roi_saliency > 0) / float(max(1, bw * bh))
+                max_aspect = 4.2 if target_type == "shark" else 2.8
 
-                    # Size-normalized score: density & compactness drive selection, NOT raw pixel area!
-                    compact_bonus = 1.0 / (aspect + 0.1)
-                    size_penalty = 1.0 if area < 4000 else (4000.0 / area)
-                    score = ((warm_density * 60.0) + (sal_density * 25.0) + (compact_bonus * 10.0)) * size_penalty
+                if aspect <= max_aspect:
+                    roi_sal = closed[y:y+bh, x:x+bw]
+                    sal_density = np.sum(roi_sal > 0) / float(max(1, bw * bh))
 
-                    pad_x = int(bw * 0.22)
-                    pad_y = int(bh * 0.22)
-                    xmin = max(0, x - pad_x)
-                    ymin = max(0, y - pad_y)
-                    xmax = min(w - 1, x + bw + pad_x)
-                    ymax = min(h - 1, y + bh + pad_y)
+                    score = sal_density * 100.0
+                    if target_type == "swimmer":
+                        roi_warm = mask_warm[y:y+bh, x:x+bw] if 'mask_warm' in locals() else np.zeros((bh, bw))
+                        warm_density = np.sum(roi_warm > 0) / float(max(1, bw * bh))
+                        score += warm_density * 80.0
 
-                    candidates.append({
-                        "box": (xmin, ymin, xmax, ymax),
-                        "score": score
-                    })
+                    if score >= min_score:
+                        pad_x = int(bw * 0.18)
+                        pad_y = int(bh * 0.18)
+                        xmin = max(0, x - pad_x)
+                        ymin = max(0, y - pad_y)
+                        xmax = min(w - 1, x + bw + pad_x)
+                        ymax = min(h - 1, y + bh + pad_y)
+                        candidates.append({
+                            "box": (xmin, ymin, xmax, ymax),
+                            "score": score
+                        })
 
         candidates.sort(key=lambda c: c["score"], reverse=True)
         selected = []
@@ -101,8 +118,6 @@ class PrecisionSwimmerAnnotator:
                     break
             if not overlap:
                 selected.append(cand)
-                if len(selected) >= target_count:
-                    break
 
         # Fallback to center region if detection fails completely
         if not selected:
@@ -110,17 +125,18 @@ class PrecisionSwimmerAnnotator:
 
         return [s["box"] for s in selected]
 
-    def annotate_image(self, image_path: str, target_count: int = 1) -> Dict[str, Any]:
+    def annotate_image(self, image_path: str, target_count: int = 1, target_type: str = "swimmer") -> Dict[str, Any]:
         filename = os.path.basename(image_path)
         stem = os.path.splitext(filename)[0]
         img = cv2.imread(image_path)
         h, w = img.shape[:2]
 
-        boxes = self.detect_swimmers(img, target_count=target_count)
+        boxes = self.detect_targets(img, target_type=target_type)
 
         yolo_lines = []
         preview_img = img.copy()
         detections = []
+        class_id = 1 if target_type == "shark" else 0
 
         for idx, (xmin, ymin, xmax, ymax) in enumerate(boxes, 1):
             xc = ((xmin + xmax) / 2.0) / w
@@ -128,12 +144,13 @@ class PrecisionSwimmerAnnotator:
             bw = (xmax - xmin) / float(w)
             bh = (ymax - ymin) / float(h)
 
-            yolo_lines.append(f"0 {xc:.6f} {yc:.6f} {bw:.6f} {bh:.6f}")
-            detections.append({"class_id": 0, "class_name": "swimmer", "bbox": [xmin, ymin, xmax, ymax]})
+            yolo_lines.append(f"{class_id} {xc:.6f} {yc:.6f} {bw:.6f} {bh:.6f}")
+            detections.append({"class_id": class_id, "class_name": target_type, "bbox": [xmin, ymin, xmax, ymax]})
 
-            cv2.rectangle(preview_img, (xmin, ymin), (xmax, ymax), (0, 255, 64), 2)
-            cv2.putText(preview_img, f"Swimmer #{idx}", (xmin, max(18, ymin - 8)),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 64), 2, cv2.LINE_AA)
+            color = (0, 140, 255) if target_type == "shark" else (0, 255, 64)
+            cv2.rectangle(preview_img, (xmin, ymin), (xmax, ymax), color, 2)
+            cv2.putText(preview_img, f"{target_type.title()} #{idx}", (xmin, max(18, ymin - 8)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2, cv2.LINE_AA)
 
         label_file = os.path.join(self.labels_dir, f"{stem}.txt")
         with open(label_file, "w") as f:
@@ -151,39 +168,37 @@ class PrecisionSwimmerAnnotator:
             "detections": detections
         }
 
-    def export_html_gallery(self, annotations: List[Dict[str, Any]], gallery_filename: str = "annotated_gallery.html"):
-        html_path = os.path.join(self.output_dir, gallery_filename)
-        with open(html_path, "w") as f:
+    def export_html_gallery(self, annotations: List[Dict[str, Any]]) -> str:
+        gallery_path = os.path.join(self.output_dir, "annotated_gallery.html")
+        with open(gallery_path, "w") as f:
             f.write("""<!DOCTYPE html>
 <html>
 <head>
-    <title>Surf Life Saving — Precision Swimmer Bounding Box Gallery</title>
+    <title>SurfLifeGen-MLX — Annotated Gallery</title>
     <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0f172a; color: #f8fafc; margin: 0; padding: 30px; }
-        h1 { text-align: center; color: #38bdf8; margin-bottom: 5px; }
-        .subtitle { text-align: center; color: #94a3b8; margin-bottom: 30px; font-size: 1.1em; }
-        .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 24px; max-width: 1600px; margin: 0 auto; }
-        .card { background: #1e293b; border-radius: 12px; overflow: hidden; border: 1px solid #334155; box-shadow: 0 4px 15px rgba(0,0,0,0.3); }
-        .card img { width: 100%; height: 260px; object-fit: cover; display: block; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0b0f19; color: #f8fafc; margin: 0; padding: 30px; }
+        h1 { text-align: center; color: #38bdf8; margin-bottom: 30px; }
+        .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(380px, 1fr)); gap: 24px; max-width: 1600px; margin: 0 auto; }
+        .card { background: #151e31; border-radius: 12px; overflow: hidden; border: 1px solid #283553; box-shadow: 0 4px 15px rgba(0,0,0,0.4); }
+        .card img { width: 100%; height: 270px; object-fit: cover; display: block; }
         .info { padding: 16px; }
         .tag { display: inline-block; background: #0284c7; color: white; padding: 4px 12px; border-radius: 12px; font-size: 0.8em; font-weight: bold; margin-bottom: 8px; }
-        .title { font-weight: bold; font-size: 1em; margin-bottom: 6px; color: #f1f5f9; }
-        .desc { font-size: 0.85em; color: #cbd5e1; }
+        .title { font-weight: bold; font-size: 1em; margin-bottom: 6px; }
+        .desc { font-size: 0.85em; color: #94a3b8; }
     </style>
 </head>
 <body>
-    <h1>Swimmer Bounding Box Inspection Gallery</h1>
-    <div class="subtitle">Size-Normalized Chromatic & High-Visibility Saliency Detection</div>
+    <h1>SurfLifeGen-MLX Automated Annotation Gallery</h1>
     <div class="grid">
 """)
             for ann in annotations:
-                num_boxes = len(ann['detections'])
+                det_cnt = len(ann.get("detections", []))
                 f.write(f"""        <div class="card">
             <a href="{ann['preview_file']}" target="_blank"><img src="{ann['preview_file']}" alt="{ann['filename']}"></a>
             <div class="info">
-                <span class="tag">Annotated: {num_boxes} Box(es)</span>
+                <span class="tag">{det_cnt} Target(s) Annotated</span>
                 <div class="title">{ann['filename']}</div>
-                <div class="desc">YOLO Label: {ann['yolo_label_file']}</div>
+                <div class="desc">Label: {ann['yolo_label_file']}</div>
             </div>
         </div>
 """)
@@ -191,4 +206,4 @@ class PrecisionSwimmerAnnotator:
 </body>
 </html>
 """)
-        return html_path
+        return gallery_path
