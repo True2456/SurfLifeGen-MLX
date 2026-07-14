@@ -40,16 +40,45 @@ cd SurfLifeGen-MLX
 pip install -e .
 ```
 
-This installs three global command-line tools into your environment:
-1. `surflifegen`: Main Cosmos 3 MLX dataset generator with Grounding DINO annotation.
+This installs four global command-line tools into your environment:
+1. `surflifegen`: Main Cosmos 3 MLX dataset generator with Grounding DINO annotation (`--target swimmer` | `--target shark`).
 2. `surflifegen-highalt`: Specialized high-altitude (`100m-400m`) active swimmer scene synthesizer.
-3. `surflifegen-verify`: Apple Silicon MLX Qwen3-VL automated bounding box audit & correction tool.
+3. `surflifegen-highway`: Dedicated highway pavement defect, road crack, pothole, and asphalt wear dataset generator.
+4. `surflifegen-verify`: Apple Silicon MLX Qwen3-VL automated bounding box audit & correction tool.
 
 ---
 
 ## Command-Line Usage & Recipes
 
-### 1. Custom Prompt Submerged Shark Generation (`--target shark` + `--detection-prompt`)
+### 1. Highway Defect & Surface Wear Inspection Dataset (`surflifegen-highway`)
+
+Generate synthetic high-resolution pavement inspection datasets (cracks, potholes, alligatoring, rutting, and degraded road paint) with automatic zero-shot Grounding DINO localization:
+
+#### Alligator Fatigue Cracking (Nadir Drone Perspective):
+```bash
+surflifegen-highway \
+  --defect-type alligator_crack \
+  --asphalt "weathered grey oxidized asphalt" \
+  --perspective nadir_drone \
+  --count 50 \
+  --box-thresh 0.18 \
+  --output-dir ./highway_alligator_dataset \
+  --steps 25
+```
+
+#### Potholes & Structural Cavities (Vehicle-Mounted Surface Perspective):
+```bash
+surflifegen-highway \
+  --defect-type pothole \
+  --perspective vehicle_surface \
+  --count 100 \
+  --detection-prompt "pothole . road crater . pavement hole . broken asphalt ." \
+  --output-dir ./highway_pothole_dataset
+```
+
+---
+
+### 2. Custom Prompt Submerged Shark Generation (`--target shark` + `--detection-prompt`)
 
 Generate custom high-altitude aerial patrol photographs of submerged marine predators using your exact custom prompt (`--prompt`), while explicitly setting `--target shark` and passing a matching Grounding DINO open-vocabulary query (`--detection-prompt`):
 
@@ -147,6 +176,18 @@ surflifegen-highalt \
 | `--nms-threshold` | `--iou-thresh` | `0.30` | Non-Maximum Suppression (NMS) IoU threshold for overlapping boxes |
 | `--detection-prompt` | `-d` | `None` | Custom dot-separated queries for Grounding DINO (e.g. `'submerged shark . shark in water .'`) |
 | `--no-annotate` | | `False` | Skip Grounding DINO auto-annotation pass |
+
+### `surflifegen-highway` Options:
+
+| Flag | Shortcut | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `--defect-type` | `-t` | `random` | Defect class: `alligator_crack`, `longitudinal_crack`, `transverse_crack`, `pothole`, `rutting`, `faded_lane_marking`, `edge_break`, `mixed`, `random` |
+| `--asphalt` | `-a` | `random` | Surface type description (e.g. `'weathered grey asphalt'`, `'dark newly paved'`) |
+| `--perspective` | | `random` | Camera inspection view: `nadir_drone`, `low_nadir`, `vehicle_surface`, `random` |
+| `--count` | `-c` | `5` | Number of highway defect scenes to generate |
+| `--bulk-count` | `-n` | `None` | Alias for `--count` when running automated generation loops |
+| `--box-threshold` | `--box-thresh` | `0.18` | Grounding DINO detection box confidence threshold |
+| `--detection-prompt` | `-d` | `None` | Custom dot-separated queries for Grounding DINO (`'pothole . crack .'`) |
 
 ---
 
