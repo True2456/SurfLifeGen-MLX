@@ -2,7 +2,7 @@
 Precision Automated Bounding Box Annotator for Surf Life Saving datasets.
 Supports multi-target detection for both Swimmers (high-visibility vests & wetsuits)
 and Submerged Sharks (dark subsurface fusiform silhouettes against turquoise water).
-Detects ALL valid targets in the frame rather than capping at 1.
+Filters out wave ripples and seafoam to prevent over-counting false positives.
 """
 
 import os
@@ -19,18 +19,18 @@ class PrecisionSwimmerAnnotator:
         os.makedirs(self.previews_dir, exist_ok=True)
 
     @staticmethod
-    def detect_targets(img_bgr: np.ndarray, target_type: str = "swimmer", min_score: float = 12.0) -> List[Tuple[int, int, int, int]]:
+    def detect_targets(img_bgr: np.ndarray, target_type: str = "swimmer", target_count: int = None, min_score: float = 28.0) -> List[Tuple[int, int, int, int]]:
         """
-        Detects all swimmers or submerged sharks in an aerial nadir image.
-        Returns a list of [xmin, ymin, xmax, ymax] boxes for every detected target.
+        Detects swimmers or submerged sharks in an aerial nadir image.
+        Requires high contrast/density score to reject wave ripples and sun glare.
         """
         h, w = img_bgr.shape[:2]
         hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
         lab = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2Lab)
         gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
 
-        # 1. Suppress white seafoam / breaking wave foam
-        seafoam_mask = cv2.inRange(hsv, np.array([0, 0, 215]), np.array([180, 45, 255]))
+        # 1. Suppress white seafoam / breaking wave foam & high-intensity glare
+        seafoam_mask = cv2.inRange(hsv, np.array([0, 0, 205]), np.array([180, 50, 255]))
 
         if target_type == "shark":
             # Submerged sharks: dark fusiform silhouettes below clear water
@@ -38,28 +38,28 @@ class PrecisionSwimmerAnnotator:
             kernel_bg = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (45, 45))
             blackhat = cv2.morphologyEx(blur, cv2.MORPH_BLACKHAT, kernel_bg)
             
-            _, saliency = cv2.threshold(blackhat, 14, 255, cv2.THRESH_BINARY)
+            _, saliency = cv2.threshold(blackhat, 16, 255, cv2.THRESH_BINARY)
             saliency[seafoam_mask > 0] = 0
             
             kernel_clean = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9))
             closed = cv2.morphologyEx(saliency, cv2.MORPH_CLOSE, kernel_clean)
         else:
             # Swimmers: warm lifeguard vests (red/orange/yellow) OR dark wetsuits/skin contrast
-            mask_warm1 = cv2.inRange(hsv, np.array([0, 55, 55]), np.array([32, 255, 255]))
-            mask_warm2 = cv2.inRange(hsv, np.array([158, 55, 55]), np.array([180, 255, 255]))
+            mask_warm1 = cv2.inRange(hsv, np.array([0, 60, 60]), np.array([32, 255, 255]))
+            mask_warm2 = cv2.inRange(hsv, np.array([158, 60, 60]), np.array([180, 255, 255]))
             mask_warm = cv2.bitwise_or(mask_warm1, mask_warm2)
 
             median_a = np.median(lab[:, :, 1])
             median_b = np.median(lab[:, :, 2])
             chroma_diff = np.sqrt((lab[:, :, 1].astype(float) - median_a)**2 + (lab[:, :, 2].astype(float) - median_b)**2)
-            chroma_mask = (chroma_diff > 14.0).astype(np.uint8) * 255
+            chroma_mask = (chroma_diff > 16.0).astype(np.uint8) * 255
 
             blur = cv2.GaussianBlur(gray, (7, 7), 0)
             kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (25, 25))
             tophat = cv2.morphologyEx(blur, cv2.MORPH_TOPHAT, kernel)
             blackhat = cv2.morphologyEx(blur, cv2.MORPH_BLACKHAT, kernel)
-            _, mask_th = cv2.threshold(tophat, 25, 255, cv2.THRESH_BINARY)
-            _, mask_bh = cv2.threshold(blackhat, 25, 255, cv2.THRESH_BINARY)
+            _, mask_th = cv2.threshold(tophat, 30, 255, cv2.THRESH_BINARY)
+            _, mask_bh = cv2.threshold(blackhat, 30, 255, cv2.THRESH_BINARY)
 
             saliency = cv2.bitwise_or(mask_warm, cv2.bitwise_or(chroma_mask, cv2.bitwise_or(mask_th, mask_bh)))
             saliency[seafoam_mask > 0] = 0
@@ -72,13 +72,13 @@ class PrecisionSwimmerAnnotator:
         candidates = []
         for cnt in contours:
             area = cv2.contourArea(cnt)
-            min_area = 120 if target_type == "shark" else 60
-            max_area = 16000 if target_type == "shark" else 9500
+            min_area = 130 if target_type == "shark" else 75
+            max_area = 15000 if target_type == "shark" else 8500
 
             if min_area <= area <= max_area:
                 x, y, bw, bh = cv2.boundingRect(cnt)
                 aspect = max(bw, bh) / max(1.0, min(bw, bh))
-                max_aspect = 4.2 if target_type == "shark" else 2.8
+                max_aspect = 4.0 if target_type == "shark" else 2.6
 
                 if aspect <= max_aspect:
                     roi_sal = closed[y:y+bh, x:x+bw]
@@ -88,7 +88,7 @@ class PrecisionSwimmerAnnotator:
                     if target_type == "swimmer":
                         roi_warm = mask_warm[y:y+bh, x:x+bw] if 'mask_warm' in locals() else np.zeros((bh, bw))
                         warm_density = np.sum(roi_warm > 0) / float(max(1, bw * bh))
-                        score += warm_density * 80.0
+                        score += warm_density * 90.0
 
                     if score >= min_score:
                         pad_x = int(bw * 0.18)
@@ -118,20 +118,22 @@ class PrecisionSwimmerAnnotator:
                     break
             if not overlap:
                 selected.append(cand)
+                if target_count and len(selected) >= target_count:
+                    break
 
-        # Fallback to center region if detection fails completely
+        # Fallback to center region only if nothing qualifies
         if not selected:
             return [(int(w*0.42), int(h*0.42), int(w*0.58), int(h*0.58))]
 
         return [s["box"] for s in selected]
 
-    def annotate_image(self, image_path: str, target_count: int = 1, target_type: str = "swimmer") -> Dict[str, Any]:
+    def annotate_image(self, image_path: str, target_count: int = None, target_type: str = "swimmer") -> Dict[str, Any]:
         filename = os.path.basename(image_path)
         stem = os.path.splitext(filename)[0]
         img = cv2.imread(image_path)
         h, w = img.shape[:2]
 
-        boxes = self.detect_targets(img, target_type=target_type)
+        boxes = self.detect_targets(img, target_type=target_type, target_count=target_count)
 
         yolo_lines = []
         preview_img = img.copy()

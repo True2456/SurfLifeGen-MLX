@@ -1,7 +1,7 @@
 """
 Apple Silicon Native Vision-Language Model (VLM) Bounding Box Verifier & Corrector
-Uses Qwen2.5-VL / Qwen3-VL (via mlx-vlm) to visually inspect, verify, and correct bounding box tags.
-Exhaustively detects all multiple swimmers or submerged sharks across the entire image frame.
+Uses Qwen2.5-VL / Qwen3-VL (via mlx-vlm) with Chain-of-Thought (CoT) visual reasoning
+to accurately count, verify, and correct bounding box tags across entire aerial frames.
 """
 
 import os
@@ -39,8 +39,8 @@ class VLMTagVerifier:
 
     def detect_targets_vlm(self, image_path: str, target_type: str = "swimmer") -> Tuple[List[Tuple[int, int, int, int]], str]:
         """
-        Asks Qwen VL to detect ALL swimmers or submerged sharks in the image.
-        Formats prompt with explicit multi-object instructions and chat template tokens.
+        Asks Qwen VL to count and detect ALL swimmers or submerged sharks using Chain-of-Thought reasoning.
+        Formats prompt with explicit two-step reasoning + grounding instructions.
         Returns a tuple of (list of [xmin, ymin, xmax, ymax] pixel coordinates, raw_response_text).
         """
         img = Image.open(image_path).convert("RGB")
@@ -48,15 +48,13 @@ class VLMTagVerifier:
 
         if target_type == "shark":
             instruction = (
-                "Scan this entire aerial Search and Rescue nadir ocean photograph from edge to edge. "
-                "Detect and locate EVERY single submerged shark silhouette under the water. Do not miss any shark. "
-                "Output bounding box coordinates for each shark in format <|box_start|>(ymin,xmin),(ymax,xmax)<|box_end|>."
+                "First, examine this entire aerial nadir ocean photograph from edge to edge, count exactly how many submerged shark silhouettes are visible under the water, and briefly describe where each shark is located. "
+                "Second, output the exact bounding box coordinates for every single shark found in format (ymin, xmin), (ymax, xmax) normalized from 0 to 1000."
             )
         else:
             instruction = (
-                "Scan this entire aerial Search and Rescue nadir ocean photograph from edge to edge. "
-                "Detect and locate EVERY single human swimmer floating or treading water across the whole image (even if there are multiple swimmers). Do not miss any swimmer. "
-                "Output bounding box coordinates for each swimmer in format <|box_start|>(ymin,xmin),(ymax,xmax)<|box_end|>."
+                "First, examine this entire aerial nadir ocean photograph from edge to edge, count exactly how many human swimmers floating or treading water are visible across the image, and briefly describe where each swimmer is located. "
+                "Second, output the exact bounding box coordinates for every single swimmer found in format (ymin, xmin), (ymax, xmax) normalized from 0 to 1000."
             )
 
         messages = [
@@ -90,7 +88,7 @@ class VLMTagVerifier:
     @staticmethod
     def _parse_qwen_boxes(text: str, width: int, height: int) -> List[Tuple[int, int, int, int]]:
         """
-        Robustly parses Qwen spatial grounding tags or coordinate tuples.
+        Robustly parses Qwen spatial grounding tags or coordinate tuples from CoT responses.
         Supports:
           1. <|box_start|>(ymin,xmin),(ymax,xmax)<|box_end|> or (ymin,xmin),(ymax,xmax)
           2. [ymin, xmin, ymax, xmax]
@@ -147,7 +145,9 @@ class VLMTagVerifier:
             vlm_boxes, raw_text = self.detect_targets_vlm(img_path, target_type=target_type)
             elapsed = round(time.time() - t0, 2)
 
-            print(f"   -> VLM Response: {raw_text.strip()[:100]} | Detected: {len(vlm_boxes)} box(es)")
+            # Extract summary line from CoT text for cleaner logging
+            first_line = raw_text.strip().split("\n")[0] if raw_text else "No response"
+            print(f"   -> VLM Summary: {first_line[:110]} | Detected: {len(vlm_boxes)} box(es)")
 
             img_cv = cv2.imread(img_path)
             h, w = img_cv.shape[:2]
