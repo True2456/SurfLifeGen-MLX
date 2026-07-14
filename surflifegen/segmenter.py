@@ -78,13 +78,17 @@ class GroundedSamSegmenter:
         img_np = np.array(img_pil)
 
         # Step 1: Grounding DINO Box Proposals
-        inputs = self.dino_processor(images=img_pil, text=detection_prompt, return_tensors="pt").to(self.device)
+        raw_dino_inputs = self.dino_processor(images=img_pil, text=detection_prompt, return_tensors="pt")
+        inputs = {
+            k: (v.to(dtype=torch.float32, device=self.device) if isinstance(v, torch.Tensor) and v.dtype == torch.float64 else (v.to(self.device) if isinstance(v, torch.Tensor) else v))
+            for k, v in raw_dino_inputs.items()
+        }
         with torch.no_grad():
             outputs = self.dino_model(**inputs)
 
         results = self.dino_processor.post_process_grounded_object_detection(
             outputs,
-            inputs.input_ids,
+            inputs["input_ids"] if "input_ids" in inputs else raw_dino_inputs.input_ids,
             threshold=thresh,
             text_threshold=t_thresh,
             target_sizes=[(h, w)]
@@ -121,11 +125,15 @@ class GroundedSamSegmenter:
 
         # Step 2: Segment Anything (SAM) Precision Mask Generation
         input_boxes = [[[float(coord) for coord in b] for b in valid_boxes]]
-        sam_inputs = self.sam_processor(
+        raw_sam_inputs = self.sam_processor(
             images=img_pil,
             input_boxes=input_boxes,
             return_tensors="pt"
-        ).to(self.device)
+        )
+        sam_inputs = {
+            k: (v.to(dtype=torch.float32, device=self.device) if isinstance(v, torch.Tensor) and v.dtype == torch.float64 else (v.to(self.device) if isinstance(v, torch.Tensor) else v))
+            for k, v in raw_sam_inputs.items()
+        }
 
         with torch.no_grad():
             sam_outputs = self.sam_model(**sam_inputs)
@@ -262,10 +270,10 @@ class GroundedSamSegmenter:
         valid_files = [
             f for f in all_files
             if not os.path.basename(f).startswith("_")
-            and "_segmented" not in f
-            and "_mask" not in f
-            and "_dino" not in f
-            and "_annotated" not in f
+            and "_segmented" not in os.path.basename(f)
+            and "_mask" not in os.path.basename(f)
+            and "_dino" not in os.path.basename(f)
+            and "_annotated" not in os.path.basename(f)
         ]
 
         print(f"\n[Grounded-SAM] Batch segmenting {len(valid_files)} images from '{dataset_dir}'...")

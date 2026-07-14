@@ -72,13 +72,17 @@ class GroundingDinoAnnotator:
         else:
             text = "swimmer . person floating in water . person in ocean ."
 
-        inputs = self.processor(images=img_pil, text=text, return_tensors="pt").to(self.device)
+        raw_inputs = self.processor(images=img_pil, text=text, return_tensors="pt")
+        inputs = {
+            k: (v.to(dtype=torch.float32, device=self.device) if isinstance(v, torch.Tensor) and v.dtype == torch.float64 else (v.to(self.device) if isinstance(v, torch.Tensor) else v))
+            for k, v in raw_inputs.items()
+        }
         with torch.no_grad():
             outputs = self.model(**inputs)
 
         results = self.processor.post_process_grounded_object_detection(
             outputs,
-            inputs.input_ids,
+            inputs["input_ids"] if "input_ids" in inputs else raw_inputs.input_ids,
             threshold=self.box_threshold,
             text_threshold=self.text_threshold,
             target_sizes=[img_pil.size[::-1]]
@@ -176,8 +180,8 @@ class GroundingDinoAnnotator:
         valid_files = [
             f for f in all_files
             if not os.path.basename(f).startswith("_")
-            and "_annotated" not in f
-            and "_dino" not in f
+            and "_annotated" not in os.path.basename(f)
+            and "_dino" not in os.path.basename(f)
             and not os.path.basename(f).startswith("dino_")
         ]
 
