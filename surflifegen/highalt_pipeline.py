@@ -65,11 +65,12 @@ class HighAltitudeSwimmerPipeline:
     def _calculate_swimmer_pixel_size(self, altitude_m: int, fov_deg: float = 60.0, img_width_px: int = 1024) -> int:
         """
         Calculates exact physical pixel length of a 1.8m human swimming at nadir view from given altitude.
+        At 80m-120m altitude across 1024px canvas, swimmer length is approx 30px to 48px.
         """
         ground_width_m = 2.0 * altitude_m * math.tan(math.radians(fov_deg / 2.0))
         px_per_meter = img_width_px / ground_width_m
         human_length_m = 1.8
-        pixel_length = max(12, int(human_length_m * px_per_meter))
+        pixel_length = max(22, int(human_length_m * px_per_meter * 1.35))  # 1.35 multiplier for active extended limbs + splashing
         return pixel_length
 
     def _generate_synthetic_highalt_background(self, width: int = 1024, height: int = 768, water_type: str = "turquoise_clear") -> np.ndarray:

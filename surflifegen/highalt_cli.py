@@ -25,8 +25,8 @@ def main():
     parser.add_argument(
         "--altitude", "-a",
         type=int,
-        default=200,
-        help="Simulated altitude in meters (e.g. 150, 200, 300, 400). Default: 200"
+        default=100,
+        help="Simulated altitude in meters (e.g. 80, 100, 120, 135). Default: 100"
     )
     parser.add_argument(
         "--swimmers", "-s",
