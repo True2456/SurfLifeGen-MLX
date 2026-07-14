@@ -19,7 +19,6 @@ try:
 except ImportError:
     MLX_VLM_AVAILABLE = False
 
-# Default to Qwen2.5-VL-7B-Instruct-4bit (fast, low memory ~5.5GB, already cached locally)
 DEFAULT_VLM_MODEL = "mlx-community/Qwen2.5-VL-7B-Instruct-4bit"
 
 class VLMTagVerifier:
@@ -82,18 +81,28 @@ class VLMTagVerifier:
             temperature=0.1
         )
 
-        boxes = self._parse_qwen_boxes(output, width=w, height=h)
+        output_text = getattr(output, "text", None)
+        if output_text is None:
+            output_text = output if isinstance(output, str) else str(output)
+
+        boxes = self._parse_qwen_boxes(output_text, width=w, height=h)
         return boxes
 
     @staticmethod
     def _parse_qwen_boxes(text: str, width: int, height: int) -> List[Tuple[int, int, int, int]]:
         """
         Parses Qwen spatial grounding tags or coordinate tuples.
+        Supports format: (ymin,xmin),(ymax,xmax) or [ymin,xmin,ymax,xmax].
         Qwen standard coordinates are normalized to [0..1000].
         """
         boxes = []
-        matches = re.findall(r"\((\d+),\s*(\d+)\),\s*\((\d+),\s*(\d+)\)", text)
-        for y1, x1, y2, x2 in matches:
+        # Match (ymin, xmin), (ymax, xmax)
+        tuple_matches = re.findall(r"\((\d+),\s*(\d+)\),\s*\((\d+),\s*(\d+)\)", text)
+        # Also match [ymin, xmin, ymax, xmax]
+        list_matches = re.findall(r"\[(\d+),\s*(\d+),\s*(\d+),\s*(\d+)\]", text)
+        
+        all_matches = tuple_matches + list_matches
+        for y1, x1, y2, x2 in all_matches:
             ymin = int(int(y1) / 1000.0 * height)
             xmin = int(int(x1) / 1000.0 * width)
             ymax = int(int(y2) / 1000.0 * height)
