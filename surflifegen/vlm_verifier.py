@@ -1,7 +1,8 @@
 """
-Apple Silicon Native Vision-Language Model (VLM) Bounding Box Verifier & Corrector
-Uses Qwen2.5-VL / Qwen3-VL (via mlx-vlm) with Chain-of-Thought (CoT) visual reasoning
-to accurately count, verify, and correct bounding box tags across entire aerial frames.
+Apple Silicon Native Vision-Language Model (VLM) + Computer Vision Hybrid Verifier
+Uses high-precision programmatic Computer Vision candidate detection combined with
+Qwen2.5-VL / Qwen3-VL patch semantic verification (`YES`/`NO`) to eliminate
+wave-ripple false positives and numerical coordinate hallucinations.
 """
 
 import os
@@ -11,6 +12,7 @@ import time
 import cv2
 from typing import List, Dict, Any, Tuple
 from PIL import Image
+from .annotator import PrecisionSwimmerAnnotator
 
 try:
     from mlx_vlm import load, generate
@@ -24,8 +26,9 @@ DEFAULT_VLM_MODEL = "mlx-community/Qwen2.5-VL-7B-Instruct-4bit"
 
 class VLMTagVerifier:
     """
-    Uses Qwen VL on Apple Silicon MLX to visually inspect aerial dataset photos,
-    detect targets (swimmers or submerged sharks), verify existing annotations, and output corrected YOLO bounding boxes.
+    Hybrid Computer Vision + Qwen VL Verifier for Surf Life Saving datasets.
+    Extracts high-precision physical candidate bounding boxes using OpenCV morphology,
+    then uses Qwen VL binary cropped-patch classification (`YES`/`NO`) to verify each target.
     """
     def __init__(self, model_path: str = DEFAULT_VLM_MODEL):
         if not MLX_VLM_AVAILABLE:
@@ -37,89 +40,92 @@ class VLMTagVerifier:
         self.config = load_config(model_path)
         print(f"[VLM Verifier] Loaded VLM successfully in {time.time()-t0:.1f}s")
 
-    def detect_targets_vlm(self, image_path: str, target_type: str = "swimmer") -> Tuple[List[Tuple[int, int, int, int]], str]:
+    def verify_patch_vlm(self, patch_path: str, target_type: str = "swimmer") -> bool:
         """
-        Asks Qwen VL to count and detect ALL swimmers or submerged sharks using Chain-of-Thought reasoning.
-        Formats prompt with explicit two-step reasoning + grounding instructions.
-        Returns a tuple of (list of [xmin, ymin, xmax, ymax] pixel coordinates, raw_response_text).
+        Asks Qwen VL to verify whether a cropped candidate image patch contains the target.
+        Returns True if Qwen confirms YES, False if NO.
         """
-        img = Image.open(image_path).convert("RGB")
-        w, h = img.size
-
         if target_type == "shark":
-            instruction = (
-                "First, examine this entire aerial nadir ocean photograph from edge to edge, count exactly how many submerged shark silhouettes are visible under the water, and briefly describe where each shark is located. "
-                "Second, output the exact bounding box coordinates for every single shark found in format (ymin, xmin), (ymax, xmax) normalized from 0 to 1000."
-            )
+            prompt = "Look at this cropped ocean photograph. Is there a submerged shark silhouette under the water clearly visible in this crop? Answer only YES or NO."
         else:
-            instruction = (
-                "First, examine this entire aerial nadir ocean photograph from edge to edge, count exactly how many human swimmers floating or treading water are visible across the image, and briefly describe where each swimmer is located. "
-                "Second, output the exact bounding box coordinates for every single swimmer found in format (ymin, xmin), (ymax, xmax) normalized from 0 to 1000."
-            )
+            prompt = "Look at this cropped ocean photograph. Is there a human person/swimmer floating or treading water clearly visible in this crop? Answer only YES or NO."
 
         messages = [
             {"role": "user", "content": [
                 {"type": "image"},
-                {"type": "text", "text": instruction}
+                {"type": "text", "text": prompt}
             ]}
         ]
 
         if hasattr(self.processor, "apply_chat_template"):
             formatted_prompt = self.processor.apply_chat_template(messages, add_generation_prompt=True)
         else:
-            formatted_prompt = f"<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>{instruction}<|im_end|>\n<|im_start|>assistant\n"
+            formatted_prompt = f"<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>{prompt}<|im_end|>\n<|im_start|>assistant\n"
 
         output = generate(
             self.model,
             self.processor,
-            image=image_path,
+            image=patch_path,
             prompt=formatted_prompt,
-            max_tokens=384,
-            temperature=0.1
+            max_tokens=15,
+            temperature=0.0
         )
 
         output_text = getattr(output, "text", None)
         if output_text is None:
             output_text = output if isinstance(output, str) else str(output)
 
-        boxes = self._parse_qwen_boxes(output_text, width=w, height=h)
-        return boxes, output_text
+        ans = output_text.strip().upper()
+        return "YES" in ans and "NO" not in ans
 
-    @staticmethod
-    def _parse_qwen_boxes(text: str, width: int, height: int) -> List[Tuple[int, int, int, int]]:
+    def detect_targets_vlm(self, image_path: str, target_type: str = "swimmer") -> Tuple[List[Tuple[int, int, int, int]], str]:
         """
-        Robustly parses Qwen spatial grounding tags or coordinate tuples from CoT responses.
-        Supports:
-          1. <|box_start|>(ymin,xmin),(ymax,xmax)<|box_end|> or (ymin,xmin),(ymax,xmax)
-          2. [ymin, xmin, ymax, xmax]
-          3. (ymin, xmin, ymax, xmax)
-        Qwen standard coordinates are normalized to [0..1000].
+        Hybrid Two-Stage Detection:
+        1. Runs PrecisionSwimmerAnnotator.detect_targets to extract physical candidate boxes.
+        2. Crops each candidate patch with context padding and asks Qwen VL binary classification.
+        Returns verified bounding boxes and a verification summary.
         """
-        boxes = []
-        p1 = re.findall(r"\((\d+),\s*(\d+)\),\s*\((\d+),\s*(\d+)\)", text)
-        p2 = re.findall(r"\[(\d+),\s*(\d+),\s*(\d+),\s*(\d+)\]", text)
-        p3 = re.findall(r"\((\d+),\s*(\d+),\s*(\d+),\s*(\d+)\)", text)
-        
-        all_matches = p1 + p2 + p3
-        for y1, x1, y2, x2 in all_matches:
-            y1, x1, y2, x2 = int(y1), int(x1), int(y2), int(x2)
-            if max(y1, x1, y2, x2) <= 1000:
-                ymin = int(y1 / 1000.0 * height)
-                xmin = int(x1 / 1000.0 * width)
-                ymax = int(y2 / 1000.0 * height)
-                xmax = int(x2 / 1000.0 * width)
-            else:
-                ymin, xmin, ymax, xmax = y1, x1, y2, x2
+        img_cv = cv2.imread(image_path)
+        h, w = img_cv.shape[:2]
+
+        # Stage 1: Programmatic Computer Vision candidate detection (low threshold to catch all potentials)
+        candidates = PrecisionSwimmerAnnotator.detect_targets(img_cv, target_type=target_type, min_score=30.0)
+
+        verified_boxes = []
+        answers = []
+        temp_crop = os.path.join(os.path.dirname(image_path), "_temp_vlm_patch.png")
+
+        for i, (xmin, ymin, xmax, ymax) in enumerate(candidates, 1):
+            bw = xmax - xmin
+            bh = ymax - ymin
+            # Generous context padding so VLM can clearly see surrounding ocean
+            pad_x = int(bw * 0.45)
+            pad_y = int(bh * 0.45)
+            crop = img_cv[max(0, ymin - pad_y):min(h, ymax + pad_y), max(0, xmin - pad_x):min(w, xmax + pad_x)]
             
-            if xmax > xmin and ymax > ymin:
-                boxes.append((xmin, ymin, xmax, ymax))
-            elif xmin > xmax and ymin > ymax:
-                boxes.append((xmax, ymax, xmin, ymin))
-        return boxes
+            if crop.size == 0:
+                continue
+                
+            cv2.imwrite(temp_crop, crop)
+            is_valid = self.verify_patch_vlm(temp_crop, target_type=target_type)
+            ans_str = "YES" if is_valid else "NO"
+            answers.append(f"Box #{i} -> {ans_str}")
+
+            if is_valid:
+                verified_boxes.append((xmin, ymin, xmax, ymax))
+
+        if os.path.exists(temp_crop):
+            try:
+                os.remove(temp_crop)
+            except OSError:
+                pass
+
+        summary_text = f"Checked {len(candidates)} CV candidates | Verified {len(verified_boxes)} true {target_type}(s) | " + ", ".join(answers[:6])
+        return verified_boxes, summary_text
 
     def verify_and_correct_dataset(self, dataset_dir: str, target_type: str = "swimmer") -> Dict[str, Any]:
         """
-        Scans a dataset directory, runs VLM visual verification over every image,
+        Scans a dataset directory, runs Hybrid CV + VLM visual verification over every image,
         corrects/updates YOLO tags in labels/, and exports a verification audit gallery.
         """
         image_files = sorted(
@@ -140,14 +146,12 @@ class VLMTagVerifier:
             stem = os.path.splitext(filename)[0]
             label_file = os.path.join(labels_dir, f"{stem}.txt")
 
-            print(f"[{idx}/{len(image_files)}] VLM Inspecting & Verifying ({target_type.upper()}): {filename} ...")
+            print(f"[{idx}/{len(image_files)}] Hybrid CV+VLM Verifying ({target_type.upper()}): {filename} ...")
             t0 = time.time()
-            vlm_boxes, raw_text = self.detect_targets_vlm(img_path, target_type=target_type)
+            vlm_boxes, summary = self.detect_targets_vlm(img_path, target_type=target_type)
             elapsed = round(time.time() - t0, 2)
 
-            # Extract summary line from CoT text for cleaner logging
-            first_line = raw_text.strip().split("\n")[0] if raw_text else "No response"
-            print(f"   -> VLM Summary: {first_line[:110]} | Detected: {len(vlm_boxes)} box(es)")
+            print(f"   -> {summary} ({elapsed}s)")
 
             img_cv = cv2.imread(img_path)
             h, w = img_cv.shape[:2]
@@ -165,12 +169,16 @@ class VLMTagVerifier:
 
                 color = (0, 140, 255) if target_type == "shark" else (0, 215, 255)
                 cv2.rectangle(img_cv, (xmin, ymin), (xmax, ymax), color, 2)
-                cv2.putText(img_cv, f"VLM {target_type.title()} #{i}", (xmin, max(18, ymin - 8)),
+                cv2.putText(img_cv, f"Verified {target_type.title()} #{i}", (xmin, max(18, ymin - 8)),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2, cv2.LINE_AA)
 
             if yolo_lines:
                 with open(label_file, "w") as f:
                     f.write("\n".join(yolo_lines) + "\n")
+            elif os.path.exists(label_file):
+                # Clear label file if zero verified targets found to remove previous false positives
+                with open(label_file, "w") as f:
+                    f.write("")
 
             preview_file = os.path.join(verified_previews_dir, filename)
             cv2.imwrite(preview_file, img_cv)
@@ -185,7 +193,7 @@ class VLMTagVerifier:
             })
 
         html_report = self.export_vlm_audit_gallery(dataset_dir, results, target_type=target_type)
-        print(f"\n[SUCCESS] VLM Verification Complete in {time.time()-total_t0:.1f}s -> Report: {html_report}")
+        print(f"\n[SUCCESS] Hybrid CV+VLM Verification Complete in {time.time()-total_t0:.1f}s -> Report: {html_report}")
         return {"report_file": html_report, "results": results}
 
     @staticmethod
@@ -195,7 +203,7 @@ class VLMTagVerifier:
             f.write(f"""<!DOCTYPE html>
 <html>
 <head>
-    <title>SurfLifeGen-MLX — VLM Visual Audit & Tag Correction Report ({target_type.upper()})</title>
+    <title>SurfLifeGen-MLX — Hybrid CV+VLM Audit Report ({target_type.upper()})</title>
     <style>
         body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #090d16; color: #f8fafc; margin: 0; padding: 30px; }}
         h1 {{ text-align: center; color: #38bdf8; margin-bottom: 5px; }}
@@ -210,15 +218,15 @@ class VLMTagVerifier:
     </style>
 </head>
 <body>
-    <h1>Qwen Native MLX Tag Verification & Audit Report ({target_type.title()})</h1>
-    <div class="subtitle">Verified and corrected bounding box tags using native Vision-Language Grounding</div>
+    <h1>Hybrid Programmatic CV + Qwen VL Audit Report ({target_type.title()})</h1>
+    <div class="subtitle">Exact physical coordinate bounds verified by semantic patch classification</div>
     <div class="grid">
 """)
             for r in results:
                 f.write(f"""        <div class="card">
             <a href="{r['preview_file']}" target="_blank"><img src="{r['preview_file']}" alt="{r['filename']}"></a>
             <div class="info">
-                <span class="tag">VLM Verified {target_type.title()} Boxes: {r['vlm_box_count']}</span>
+                <span class="tag">Verified {target_type.title()} Boxes: {r['vlm_box_count']}</span>
                 <div class="title">{r['filename']}</div>
                 <div class="desc">Updated YOLO: {r['yolo_label_file']} ({r['verification_time_sec']}s)</div>
             </div>
