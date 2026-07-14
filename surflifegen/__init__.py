@@ -15,5 +15,6 @@ from .highway_prompt_builder import generate_highway_prompt
 from .highway_pipeline import HighwayWearPipeline
 from .segmenter import GroundedSamSegmenter
 from .urban_segmenter import UrbanSceneSegmenter
+from .urban_live import UrbanLiveVideoPlayer
 from .yolo_exporter import YoloDatasetExporter
 from .vlm_verifier import VLMTagVerifier
