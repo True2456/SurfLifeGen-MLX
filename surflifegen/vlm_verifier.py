@@ -1,6 +1,6 @@
 """
 Apple Silicon Native Vision-Language Model (VLM) Bounding Box Verifier & Corrector
-Uses SOTA Qwen3-VL / Qwen2.5-VL (via mlx-vlm) to visually inspect, verify, and correct swimmer bounding box tags.
+Uses Qwen2.5-VL / Qwen3-VL (via mlx-vlm) to visually inspect, verify, and correct bounding box tags.
 """
 
 import os
@@ -19,15 +19,13 @@ try:
 except ImportError:
     MLX_VLM_AVAILABLE = False
 
-# Cutting-edge 2026 SOTA default: Qwen3-VL Mixture-of-Experts (Active 3B / 30B Total)
-# Provides 30B visual grounding precision at 3B inference speed
-DEFAULT_VLM_MODEL = "mlx-community/Qwen3-VL-30B-A3B-Instruct-4bit"
-FALLBACK_VLM_MODEL = "mlx-community/Qwen2.5-VL-7B-Instruct-4bit"
+# Default to Qwen2.5-VL-7B-Instruct-4bit (fast, low memory ~5.5GB, already cached locally)
+DEFAULT_VLM_MODEL = "mlx-community/Qwen2.5-VL-7B-Instruct-4bit"
 
 class VLMTagVerifier:
     """
-    Uses Qwen3-VL / Qwen2.5-VL on Apple Silicon MLX to visually inspect aerial dataset photos,
-    count swimmers, verify existing annotations, and output corrected YOLO bounding boxes.
+    Uses Qwen VL on Apple Silicon MLX to visually inspect aerial dataset photos,
+    detect targets (swimmers or submerged sharks), verify existing annotations, and output corrected YOLO bounding boxes.
     """
     def __init__(self, model_path: str = DEFAULT_VLM_MODEL):
         if not MLX_VLM_AVAILABLE:
@@ -35,35 +33,51 @@ class VLMTagVerifier:
         
         print(f"[VLM Verifier] Loading Apple Silicon MLX Vision Model: {model_path} ...")
         t0 = time.time()
-        try:
-            self.model, self.processor = load(model_path)
-            self.config = load_config(model_path)
-        except Exception as e:
-            print(f"[VLM Verifier] Warning: Could not load {model_path} ({e}). Falling back to {FALLBACK_VLM_MODEL} ...")
-            self.model, self.processor = load(FALLBACK_VLM_MODEL)
-            self.config = load_config(FALLBACK_VLM_MODEL)
+        self.model, self.processor = load(model_path)
+        self.config = load_config(model_path)
         print(f"[VLM Verifier] Loaded VLM successfully in {time.time()-t0:.1f}s")
 
-    def detect_swimmers_vlm(self, image_path: str) -> List[Tuple[int, int, int, int]]:
+    def detect_targets_vlm(self, image_path: str, target_type: str = "swimmer") -> List[Tuple[int, int, int, int]]:
         """
-        Asks Qwen3-VL / Qwen2.5-VL to detect all swimmers in the image and parse its grounding boxes.
+        Asks Qwen VL to detect all swimmers or submerged sharks in the image.
+        Formats prompt with proper chat template tokens (<|vision_start|><|image_pad|><|vision_end|>).
         Returns a list of [xmin, ymin, xmax, ymax] pixel coordinates.
         """
         img = Image.open(image_path).convert("RGB")
         w, h = img.size
 
-        prompt = (
-            "You are an expert aerial Search and Rescue vision analyst. "
-            "Inspect this overhead nadir photograph of ocean water carefully. "
-            "Detect and locate every human swimmer treading water or floating. "
-            "Output the bounding box coordinates for each swimmer in format <|box_start|>(ymin,xmin),(ymax,xmax)<|box_end|>."
-        )
+        if target_type == "shark":
+            instruction = (
+                "You are an expert Search and Rescue aerial patrol analyst. "
+                "Inspect this overhead nadir ocean photograph carefully. "
+                "Detect and locate every submerged shark silhouette under the water. "
+                "Output the bounding box coordinates for each shark in format <|box_start|>(ymin,xmin),(ymax,xmax)<|box_end|>."
+            )
+        else:
+            instruction = (
+                "You are an expert Search and Rescue aerial patrol analyst. "
+                "Inspect this overhead nadir ocean photograph carefully. "
+                "Detect and locate every human swimmer treading water or floating. "
+                "Output the bounding box coordinates for each swimmer in format <|box_start|>(ymin,xmin),(ymax,xmax)<|box_end|>."
+            )
+
+        messages = [
+            {"role": "user", "content": [
+                {"type": "image"},
+                {"type": "text", "text": instruction}
+            ]}
+        ]
+
+        if hasattr(self.processor, "apply_chat_template"):
+            formatted_prompt = self.processor.apply_chat_template(messages, add_generation_prompt=True)
+        else:
+            formatted_prompt = f"<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>{instruction}<|im_end|>\n<|im_start|>assistant\n"
 
         output = generate(
             self.model,
             self.processor,
             image=image_path,
-            prompt=prompt,
+            prompt=formatted_prompt,
             max_tokens=256,
             temperature=0.1
         )
@@ -88,7 +102,7 @@ class VLMTagVerifier:
                 boxes.append((xmin, ymin, xmax, ymax))
         return boxes
 
-    def verify_and_correct_dataset(self, dataset_dir: str) -> Dict[str, Any]:
+    def verify_and_correct_dataset(self, dataset_dir: str, target_type: str = "swimmer") -> Dict[str, Any]:
         """
         Scans a dataset directory, runs VLM visual verification over every image,
         corrects/updates YOLO tags in labels/, and exports a verification audit gallery.
@@ -111,9 +125,9 @@ class VLMTagVerifier:
             stem = os.path.splitext(filename)[0]
             label_file = os.path.join(labels_dir, f"{stem}.txt")
 
-            print(f"[{idx}/{len(image_files)}] VLM Inspecting & Verifying: {filename} ...")
+            print(f"[{idx}/{len(image_files)}] VLM Inspecting & Verifying ({target_type.upper()}): {filename} ...")
             t0 = time.time()
-            vlm_boxes = self.detect_swimmers_vlm(img_path)
+            vlm_boxes = self.detect_targets_vlm(img_path, target_type=target_type)
             elapsed = round(time.time() - t0, 2)
 
             img_cv = cv2.imread(img_path)
@@ -121,17 +135,19 @@ class VLMTagVerifier:
 
             yolo_lines = []
             detections = []
+            class_id = 1 if target_type == "shark" else 0
             for i, (xmin, ymin, xmax, ymax) in enumerate(vlm_boxes, 1):
                 xc = ((xmin + xmax) / 2.0) / w
                 yc = ((ymin + ymax) / 2.0) / h
                 bw = (xmax - xmin) / float(w)
                 bh = (ymax - ymin) / float(h)
-                yolo_lines.append(f"0 {xc:.6f} {yc:.6f} {bw:.6f} {bh:.6f}")
-                detections.append({"class_id": 0, "class_name": "swimmer", "bbox": [xmin, ymin, xmax, ymax]})
+                yolo_lines.append(f"{class_id} {xc:.6f} {yc:.6f} {bw:.6f} {bh:.6f}")
+                detections.append({"class_id": class_id, "class_name": target_type, "bbox": [xmin, ymin, xmax, ymax]})
 
-                cv2.rectangle(img_cv, (xmin, ymin), (xmax, ymax), (0, 215, 255), 2)
-                cv2.putText(img_cv, f"VLM Swimmer #{i}", (xmin, max(18, ymin - 8)),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 215, 255), 2, cv2.LINE_AA)
+                color = (0, 140, 255) if target_type == "shark" else (0, 215, 255)
+                cv2.rectangle(img_cv, (xmin, ymin), (xmax, ymax), color, 2)
+                cv2.putText(img_cv, f"VLM {target_type.title()} #{i}", (xmin, max(18, ymin - 8)),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2, cv2.LINE_AA)
 
             if yolo_lines:
                 with open(label_file, "w") as f:
@@ -145,36 +161,37 @@ class VLMTagVerifier:
                 "yolo_label_file": f"labels/{stem}.txt",
                 "preview_file": f"vlm_verified_previews/{filename}",
                 "vlm_box_count": len(vlm_boxes),
+                "target_type": target_type,
                 "verification_time_sec": elapsed
             })
 
-        html_report = self.export_vlm_audit_gallery(dataset_dir, results)
+        html_report = self.export_vlm_audit_gallery(dataset_dir, results, target_type=target_type)
         print(f"\n[SUCCESS] VLM Verification Complete in {time.time()-total_t0:.1f}s -> Report: {html_report}")
         return {"report_file": html_report, "results": results}
 
     @staticmethod
-    def export_vlm_audit_gallery(dataset_dir: str, results: List[Dict[str, Any]]) -> str:
+    def export_vlm_audit_gallery(dataset_dir: str, results: List[Dict[str, Any]], target_type: str = "swimmer") -> str:
         report_path = os.path.join(dataset_dir, "vlm_verification_report.html")
         with open(report_path, "w") as f:
-            f.write("""<!DOCTYPE html>
+            f.write(f"""<!DOCTYPE html>
 <html>
 <head>
-    <title>SurfLifeGen-MLX — VLM Visual Audit & Tag Correction Report</title>
+    <title>SurfLifeGen-MLX — VLM Visual Audit & Tag Correction Report ({target_type.upper()})</title>
     <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #090d16; color: #f8fafc; margin: 0; padding: 30px; }
-        h1 { text-align: center; color: #38bdf8; margin-bottom: 5px; }
-        .subtitle { text-align: center; color: #94a3b8; margin-bottom: 30px; font-size: 1.1em; }
-        .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(380px, 1fr)); gap: 24px; max-width: 1600px; margin: 0 auto; }
-        .card { background: #131c2e; border-radius: 12px; overflow: hidden; border: 1px solid #23314e; box-shadow: 0 4px 15px rgba(0,0,0,0.4); }
-        .card img { width: 100%; height: 270px; object-fit: cover; display: block; }
-        .info { padding: 16px; }
-        .tag { display: inline-block; background: #0284c7; color: white; padding: 4px 12px; border-radius: 12px; font-size: 0.8em; font-weight: bold; margin-bottom: 8px; }
-        .title { font-weight: bold; font-size: 1em; margin-bottom: 6px; color: #f1f5f9; }
-        .desc { font-size: 0.85em; color: #cbd5e1; }
+        body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #090d16; color: #f8fafc; margin: 0; padding: 30px; }}
+        h1 {{ text-align: center; color: #38bdf8; margin-bottom: 5px; }}
+        .subtitle {{ text-align: center; color: #94a3b8; margin-bottom: 30px; font-size: 1.1em; }}
+        .grid {{ display: grid; grid-template-columns: repeat(auto-fill, minmax(380px, 1fr)); gap: 24px; max-width: 1600px; margin: 0 auto; }}
+        .card {{ background: #131c2e; border-radius: 12px; overflow: hidden; border: 1px solid #23314e; box-shadow: 0 4px 15px rgba(0,0,0,0.4); }}
+        .card img {{ width: 100%; height: 270px; object-fit: cover; display: block; }}
+        .info {{ padding: 16px; }}
+        .tag {{ display: inline-block; background: #0284c7; color: white; padding: 4px 12px; border-radius: 12px; font-size: 0.8em; font-weight: bold; margin-bottom: 8px; }}
+        .title {{ font-weight: bold; font-size: 1em; margin-bottom: 6px; color: #f1f5f9; }}
+        .desc {{ font-size: 0.85em; color: #cbd5e1; }}
     </style>
 </head>
 <body>
-    <h1>Qwen3-VL Native MLX Tag Verification & Audit Report</h1>
+    <h1>Qwen Native MLX Tag Verification & Audit Report ({target_type.title()})</h1>
     <div class="subtitle">Verified and corrected bounding box tags using native Vision-Language Grounding</div>
     <div class="grid">
 """)
@@ -182,7 +199,7 @@ class VLMTagVerifier:
                 f.write(f"""        <div class="card">
             <a href="{r['preview_file']}" target="_blank"><img src="{r['preview_file']}" alt="{r['filename']}"></a>
             <div class="info">
-                <span class="tag">VLM Verified Boxes: {r['vlm_box_count']}</span>
+                <span class="tag">VLM Verified {target_type.title()} Boxes: {r['vlm_box_count']}</span>
                 <div class="title">{r['filename']}</div>
                 <div class="desc">Updated YOLO: {r['yolo_label_file']} ({r['verification_time_sec']}s)</div>
             </div>
