@@ -7,6 +7,7 @@
 ## ✨ Features
 
 - **⚡ Apple Silicon Native MLX 8-Bit Inference:** Runs directly on Apple Silicon (M1/M2/M3/M4/M5 Max/Ultra) using native `mlx` attention kernels, utilizing ~12GB memory while generating 1024×768 aerial photographs in ~25 seconds.
+- **🎲 Modular Bulk Prompt Builder:** Dynamically creates varied, high-standard maritime prompts spanning altitudes (40m–100m), water conditions (rip currents, reefs, swell), lighting (golden hour, noon, overcast), and rescue attire—guaranteed **zero drone noun hallucinations**.
 - **🎯 Precision Automated YOLO Annotator:** Automatically detects swimmers, suppresses low-saturation seafoam/whitecaps, matches expected swimmer counts, and outputs normalized YOLO `0 xc yc w h` label files (`labels/*.txt`).
 - **👀 Visual Inspection Gallery:** Automatically generates green bounding box preview images and an interactive HTML inspection sheet (`annotated_gallery.html`).
 - **📂 Flexible Model Location:** Point directly to your local Cosmos 3 MLX folder (`--model-path`) **or** let the pipeline automatically fetch/download weights (`--auto-download`) from Hugging Face Hub.
@@ -21,21 +22,35 @@
    cd SurfLifeGen-MLX
    ```
 
-2. **Install in editable mode (or install requirements):**
+2. **Install package:**
    ```bash
    pip install -e .
    ```
-   *(Requires Apple Silicon macOS with `mlx >= 0.22`, `torch`, `diffusers`, `transformers`, `opencv-python`)*
 
 ---
 
-## 🚀 Quickstart & Usage
+## 🚀 Usage
 
-### 1. Command-Line Interface (`surflifegen`)
+### 1. Generate Bulk Modular Dataset (`--bulk-count`)
+Generate any number `X` of varied aerial dataset images using the modular prompt builder (perfect for generating batches to filter/validate with an AI QA checker):
 
-#### Option A: Point to an existing local Cosmos 3 MLX install location
-If you already have `Cosmos3-Nano-MLX-8bit` downloaded on your machine, pass `--model-path`:
+```bash
+surflifegen \
+  --bulk-count 100 \
+  --output-dir ./bulk_swimmer_dataset \
+  --steps 25
+```
 
+Or using the standalone Python script:
+```bash
+python examples/generate_bulk_dataset.py --count 100 --output-dir ./bulk_swimmer_dataset
+```
+
+---
+
+### 2. Standard Usage Options
+
+#### Option A: Point to an existing local Cosmos 3 MLX install directory
 ```bash
 surflifegen \
   --model-path /Users/true/Documents/Mati_Train/models/Cosmos3-Nano-MLX-8bit \
@@ -44,8 +59,6 @@ surflifegen \
 ```
 
 #### Option B: Automatic Download / Resolution
-If you don't pass `--model-path` (or if the folder isn't found), `surflifegen` will automatically check your local cache or download the weights from Hugging Face Hub (`True2456/Cosmos3-Nano-MLX-8bit`):
-
 ```bash
 surflifegen \
   --auto-download \
@@ -53,58 +66,25 @@ surflifegen \
   --steps 25
 ```
 
-#### Custom Single-Image Generation & Annotation
-```bash
-surflifegen \
-  --model-path /path/to/Cosmos3-Nano-MLX-8bit \
-  --prompt "Direct overhead nadir photograph looking straight down from 90 meters altitude over coastal ocean water at two swimmers wearing red lifeguard vests" \
-  --swimmer-count 2 \
-  --output-dir ./custom_output
-```
-
 ---
 
-### 2. Python API
-
-You can use `SurfLifeGenPipeline` and `PrecisionSwimmerAnnotator` directly in your Python code or Jupyter notebooks:
+### 3. Programmatic Python API
 
 ```python
-from surflifegen import SurfLifeGenPipeline, PrecisionSwimmerAnnotator
+from surflifegen import SurfLifeGenPipeline, PrecisionSwimmerAnnotator, generate_modular_prompt
 
-# 1. Initialize pipeline (points to local folder OR downloads automatically)
-pipe = SurfLifeGenPipeline(
-    model_path="/path/to/Cosmos3-Nano-MLX-8bit",
-    auto_download=True
-)
+pipe = SurfLifeGenPipeline(auto_download=True)
+annotator = PrecisionSwimmerAnnotator(output_dir="./output")
 
-# 2. Generate aerial nadir image
-prompt = (
-    "Direct overhead nadir photograph looking straight down from 90 meters altitude "
-    "over open coastal ocean water at a single human swimmer treading water. "
-    "Swimmer wears a high-visibility red lifeguard vest."
-)
-image = pipe.generate(prompt=prompt, width=1024, height=768, steps=25)
-image.save("./swimmer_90m.png")
+# Generate modular prompt dynamically
+config = generate_modular_prompt()
+print("Prompt:", config["prompt"])
 
-# 3. Automatically detect swimmer & export YOLO bounding box (.txt)
-annotator = PrecisionSwimmerAnnotator(output_dir="./output_dataset")
-ann = annotator.annotate_image("./swimmer_90m.png", target_count=1)
+image = pipe.generate(prompt=config["prompt"], steps=25)
+image.save("./sample.png")
 
-print("YOLO Label Saved:", ann["yolo_label_file"])
-```
-
----
-
-## 🎯 Dataset Output Format
-
-Every generated dataset includes:
-```
-my_swimmer_dataset/
-├── *.png                     # High-resolution 1024x768 aerial nadir images
-├── labels/                   # YOLO format coordinates (.txt)
-│   └── swimmer_01.txt        # ClassID x_center y_center width height
-├── annotated_previews/       # Visual PNGs with green bounding boxes drawn
-└── annotated_gallery.html    # Standalone interactive inspection browser gallery
+# Auto-annotate matching the exact swimmer count
+ann = annotator.annotate_image("./sample.png", target_count=config["swimmer_count"])
 ```
 
 ---
