@@ -11,7 +11,7 @@ import argparse
 import time
 import json
 from .generator import SurfLifeGenPipeline
-from .annotator import PrecisionSwimmerAnnotator
+from .dino_annotator import GroundingDinoAnnotator, DINO_AVAILABLE
 from .prompt_builder import generate_modular_prompt
 from .shark_prompt_builder import generate_shark_prompt
 
@@ -53,7 +53,13 @@ def main():
     os.makedirs(args.output_dir, exist_ok=True)
     pipe = SurfLifeGenPipeline(model_path=args.model_path, auto_download=args.auto_download)
 
-    annotator = None if args.no_annotate else PrecisionSwimmerAnnotator(args.output_dir)
+    annotator = None
+    if not args.no_annotate and DINO_AVAILABLE:
+        try:
+            print("\n[SurfLifeGen-MLX] Initializing Option A: Grounding DINO Zero-Shot Auto-Annotator...")
+            annotator = GroundingDinoAnnotator(box_threshold=0.22, text_threshold=0.22, nms_iou_threshold=0.30)
+        except Exception as e:
+            print(f"[SurfLifeGen-MLX] Warning: Grounding DINO could not be initialized: {e}")
 
     meta_file = os.path.join(args.output_dir, "dataset_metadata.json")
     coco_file = os.path.join(args.output_dir, "bounding_boxes.json")
@@ -108,9 +114,17 @@ def main():
             metadata.append(mod_meta)
 
         if annotator:
-            ann = annotator.annotate_image(out_path, target_count=count, target_type=args.target)
-            annotations.append(ann)
-            print(f"  -> Annotated {len(ann['detections'])} {args.target}(s): {ann['yolo_label_file']}")
+            annotated_path = out_path.replace(".png", "_annotated.png")
+            detections, summary = annotator.annotate_image(out_path, output_path=annotated_path, target_type=args.target)
+            ann_record = {
+                "image_file": filename,
+                "annotated_file": os.path.basename(annotated_path),
+                "target_type": args.target,
+                "detections": detections,
+                "summary": summary
+            }
+            annotations.append(ann_record)
+            print(f"  -> {summary} ({os.path.basename(annotated_path)})")
 
         if metadata:
             with open(meta_file, "w") as f:
@@ -118,11 +132,6 @@ def main():
         if annotator and annotations:
             with open(coco_file, "w") as f:
                 json.dump(annotations, f, indent=2)
-            annotator.export_html_gallery(annotations)
-
-    if annotator and annotations:
-        html_file = os.path.join(args.output_dir, "annotated_gallery.html")
-        print(f"\n[SUCCESS] Combined inspection gallery exported to: {html_file}")
 
 if __name__ == "__main__":
     main()
