@@ -36,28 +36,24 @@ class VLMTagVerifier:
         self.config = load_config(model_path)
         print(f"[VLM Verifier] Loaded VLM successfully in {time.time()-t0:.1f}s")
 
-    def detect_targets_vlm(self, image_path: str, target_type: str = "swimmer") -> List[Tuple[int, int, int, int]]:
+    def detect_targets_vlm(self, image_path: str, target_type: str = "swimmer") -> Tuple[List[Tuple[int, int, int, int]], str]:
         """
         Asks Qwen VL to detect all swimmers or submerged sharks in the image.
         Formats prompt with proper chat template tokens (<|vision_start|><|image_pad|><|vision_end|>).
-        Returns a list of [xmin, ymin, xmax, ymax] pixel coordinates.
+        Returns a tuple of (list of [xmin, ymin, xmax, ymax] pixel coordinates, raw_response_text).
         """
         img = Image.open(image_path).convert("RGB")
         w, h = img.size
 
         if target_type == "shark":
             instruction = (
-                "You are an expert Search and Rescue aerial patrol analyst. "
-                "Inspect this overhead nadir ocean photograph carefully. "
-                "Detect and locate every submerged shark silhouette under the water. "
-                "Output the bounding box coordinates for each shark in format <|box_start|>(ymin,xmin),(ymax,xmax)<|box_end|>."
+                "Locate every submerged shark silhouette under the water in this image. "
+                "Output bounding box coordinates for each shark in format <|box_start|>(ymin,xmin),(ymax,xmax)<|box_end|> or [ymin, xmin, ymax, xmax] normalized from 0 to 1000."
             )
         else:
             instruction = (
-                "You are an expert Search and Rescue aerial patrol analyst. "
-                "Inspect this overhead nadir ocean photograph carefully. "
-                "Detect and locate every human swimmer treading water or floating. "
-                "Output the bounding box coordinates for each swimmer in format <|box_start|>(ymin,xmin),(ymax,xmax)<|box_end|>."
+                "Locate every human swimmer floating or treading water in this ocean photograph. "
+                "Output bounding box coordinates for each swimmer in format <|box_start|>(ymin,xmin),(ymax,xmax)<|box_end|> or [ymin, xmin, ymax, xmax] normalized from 0 to 1000."
             )
 
         messages = [
@@ -86,29 +82,38 @@ class VLMTagVerifier:
             output_text = output if isinstance(output, str) else str(output)
 
         boxes = self._parse_qwen_boxes(output_text, width=w, height=h)
-        return boxes
+        return boxes, output_text
 
     @staticmethod
     def _parse_qwen_boxes(text: str, width: int, height: int) -> List[Tuple[int, int, int, int]]:
         """
-        Parses Qwen spatial grounding tags or coordinate tuples.
-        Supports format: (ymin,xmin),(ymax,xmax) or [ymin,xmin,ymax,xmax].
+        Robustly parses Qwen spatial grounding tags or coordinate tuples.
+        Supports:
+          1. <|box_start|>(ymin,xmin),(ymax,xmax)<|box_end|> or (ymin,xmin),(ymax,xmax)
+          2. [ymin, xmin, ymax, xmax]
+          3. (ymin, xmin, ymax, xmax)
         Qwen standard coordinates are normalized to [0..1000].
         """
         boxes = []
-        # Match (ymin, xmin), (ymax, xmax)
-        tuple_matches = re.findall(r"\((\d+),\s*(\d+)\),\s*\((\d+),\s*(\d+)\)", text)
-        # Also match [ymin, xmin, ymax, xmax]
-        list_matches = re.findall(r"\[(\d+),\s*(\d+),\s*(\d+),\s*(\d+)\]", text)
+        p1 = re.findall(r"\((\d+),\s*(\d+)\),\s*\((\d+),\s*(\d+)\)", text)
+        p2 = re.findall(r"\[(\d+),\s*(\d+),\s*(\d+),\s*(\d+)\]", text)
+        p3 = re.findall(r"\((\d+),\s*(\d+),\s*(\d+),\s*(\d+)\)", text)
         
-        all_matches = tuple_matches + list_matches
+        all_matches = p1 + p2 + p3
         for y1, x1, y2, x2 in all_matches:
-            ymin = int(int(y1) / 1000.0 * height)
-            xmin = int(int(x1) / 1000.0 * width)
-            ymax = int(int(y2) / 1000.0 * height)
-            xmax = int(int(x2) / 1000.0 * width)
+            y1, x1, y2, x2 = int(y1), int(x1), int(y2), int(x2)
+            if max(y1, x1, y2, x2) <= 1000:
+                ymin = int(y1 / 1000.0 * height)
+                xmin = int(x1 / 1000.0 * width)
+                ymax = int(y2 / 1000.0 * height)
+                xmax = int(x2 / 1000.0 * width)
+            else:
+                ymin, xmin, ymax, xmax = y1, x1, y2, x2
+            
             if xmax > xmin and ymax > ymin:
                 boxes.append((xmin, ymin, xmax, ymax))
+            elif xmin > xmax and ymin > ymax:
+                boxes.append((xmax, ymax, xmin, ymin))
         return boxes
 
     def verify_and_correct_dataset(self, dataset_dir: str, target_type: str = "swimmer") -> Dict[str, Any]:
@@ -136,8 +141,10 @@ class VLMTagVerifier:
 
             print(f"[{idx}/{len(image_files)}] VLM Inspecting & Verifying ({target_type.upper()}): {filename} ...")
             t0 = time.time()
-            vlm_boxes = self.detect_targets_vlm(img_path, target_type=target_type)
+            vlm_boxes, raw_text = self.detect_targets_vlm(img_path, target_type=target_type)
             elapsed = round(time.time() - t0, 2)
+
+            print(f"   -> VLM Response: {raw_text.strip()[:100]} | Detected: {len(vlm_boxes)} box(es)")
 
             img_cv = cv2.imread(img_path)
             h, w = img_cv.shape[:2]
