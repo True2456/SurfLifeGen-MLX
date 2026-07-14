@@ -336,6 +336,13 @@ class UrbanSceneSegmenter:
             if base_name.endswith(suffix):
                 base_name = base_name[:-len(suffix)]
 
+        clean_dest = os.path.join(base_dir, os.path.basename(image_path))
+        if os.path.abspath(base_dir) != os.path.abspath(os.path.dirname(image_path)):
+            if not os.path.exists(clean_dest) or os.path.getsize(clean_dest) == 0:
+                shutil.copy2(image_path, clean_dest)
+        else:
+            clean_dest = image_path
+
         seg_path = os.path.join(base_dir, f"{base_name}_urban_segmented.png")
         mask_path = os.path.join(base_dir, f"{base_name}_urban_mask.png")
         vis_path = os.path.join(base_dir, f"{base_name}_urban_mask_vis.png")
@@ -374,7 +381,8 @@ class UrbanSceneSegmenter:
             existing_data = [item for item in existing_data if item.get("image_id") != base_name]
             existing_data.append({
                 "image_id": base_name,
-                "image_path": image_path,
+                "clean_file": os.path.basename(image_path),
+                "image_path": clean_dest,
                 "mask_path": mask_path if save_mask else "",
                 "width": orig_w,
                 "height": orig_h,

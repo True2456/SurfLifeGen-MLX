@@ -157,6 +157,20 @@ class YoloDatasetExporter:
             and "_mask" not in f
         ]
 
+        # If no clean images found directly in dataset_dir, recover them from JSON records
+        if not clean_images and records:
+            for r in records:
+                if not isinstance(r, dict):
+                    continue
+                orig = r.get("image_path", r.get("clean_file", ""))
+                if orig and os.path.exists(orig):
+                    # Copy clean image right into dataset_dir if not already there
+                    dest_path = os.path.join(self.dataset_dir, os.path.basename(orig))
+                    if not os.path.exists(dest_path):
+                        shutil.copy2(orig, dest_path)
+                    clean_images.append(dest_path)
+            clean_images = sorted(list(set(clean_images)))
+
         if not clean_images:
             raise FileNotFoundError(f"No clean image files found inside {self.dataset_dir}!")
 
