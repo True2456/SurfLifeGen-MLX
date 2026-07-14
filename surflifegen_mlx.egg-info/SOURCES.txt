@@ -1,0 +1,17 @@
+LICENSE
+README.md
+setup.py
+surflifegen/__init__.py
+surflifegen/annotator.py
+surflifegen/cli.py
+surflifegen/generator.py
+surflifegen/model_utils.py
+surflifegen/prompt_builder.py
+surflifegen/verify_cli.py
+surflifegen/vlm_verifier.py
+surflifegen_mlx.egg-info/PKG-INFO
+surflifegen_mlx.egg-info/SOURCES.txt
+surflifegen_mlx.egg-info/dependency_links.txt
+surflifegen_mlx.egg-info/entry_points.txt
+surflifegen_mlx.egg-info/requires.txt
+surflifegen_mlx.egg-info/top_level.txt
