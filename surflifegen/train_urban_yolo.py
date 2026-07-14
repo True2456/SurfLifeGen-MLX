@@ -139,7 +139,11 @@ class UrbanYoloAutoTrainer:
             copy_images=True,
             class_mapping={cls_name: idx for idx, cls_name in enumerate(self.classes)}
         )
-        data_yaml_path = exporter.export()
+        export_summary = exporter.export()
+        if isinstance(export_summary, dict):
+            data_yaml_path = export_summary.get("data_yaml", os.path.join(self.export_dir, "data.yaml"))
+        else:
+            data_yaml_path = str(export_summary)
         print(f"[AutoTrainer] ✅ YOLO segmentation dataset exported to: {self.export_dir}")
         print(f"  👉 Configuration file: {data_yaml_path}")
         return data_yaml_path
