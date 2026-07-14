@@ -1,6 +1,6 @@
 """
 Command Line Interface for SurfLifeGen-MLX
-Supports safe auto-incrementing filenames and non-destructive metadata/annotation merging.
+Supports safe auto-incrementing filenames and real-time per-image metadata/annotation saving.
 """
 
 import os
@@ -20,10 +20,6 @@ DEFAULT_PROMPTS = [
 ]
 
 def get_next_start_index(output_dir: str, prefix: str = "bulk_") -> int:
-    """
-    Scans the output directory for existing files like bulk_0042_alt90m.png
-    and returns the next index (e.g. 43) so previous files are never overwritten.
-    """
     pattern = os.path.join(output_dir, f"{prefix}*.png")
     files = glob.glob(pattern)
     max_idx = 0
@@ -56,7 +52,6 @@ def main():
 
     annotator = None if args.no_annotate else PrecisionSwimmerAnnotator(args.output_dir)
 
-    # Load existing metadata & annotations if present so we never overwrite past work
     meta_file = os.path.join(args.output_dir, "dataset_metadata.json")
     coco_file = os.path.join(args.output_dir, "bounding_boxes.json")
 
@@ -109,14 +104,17 @@ def main():
             annotations.append(ann)
             print(f"  -> Annotated {len(ann['detections'])} swimmer(s): {ann['yolo_label_file']}")
 
-    if metadata:
-        with open(meta_file, "w") as f:
-            json.dump(metadata, f, indent=2)
+        # Save metadata and gallery immediately after every image so resuming never loses records
+        if metadata:
+            with open(meta_file, "w") as f:
+                json.dump(metadata, f, indent=2)
+        if annotator and annotations:
+            with open(coco_file, "w") as f:
+                json.dump(annotations, f, indent=2)
+            annotator.export_html_gallery(annotations)
 
     if annotator and annotations:
-        with open(coco_file, "w") as f:
-            json.dump(annotations, f, indent=2)
-        html_file = annotator.export_html_gallery(annotations)
+        html_file = os.path.join(args.output_dir, "annotated_gallery.html")
         print(f"\n[SUCCESS] Combined inspection gallery exported to: {html_file}")
 
 if __name__ == "__main__":

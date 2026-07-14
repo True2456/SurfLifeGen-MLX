@@ -1,7 +1,7 @@
 """
 Precision Automated Swimmer Bounding Box Annotator for Surf Life Saving datasets.
 Combines adaptive background color contrast, high-visibility swimwear detection,
-and morphological filtering to accurately localize swimmers and suppress ocean seafoam.
+and size-normalized scoring so swimmers are always prioritized over large ocean patches.
 """
 
 import os
@@ -24,32 +24,32 @@ class PrecisionSwimmerAnnotator:
         lab = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2Lab)
 
         # 1. High-visibility rescue colors (red, orange, yellow rash vests & caps)
-        mask_warm1 = cv2.inRange(hsv, np.array([0, 55, 50]), np.array([30, 255, 255]))
-        mask_warm2 = cv2.inRange(hsv, np.array([160, 55, 50]), np.array([180, 255, 255]))
+        mask_warm1 = cv2.inRange(hsv, np.array([0, 50, 50]), np.array([32, 255, 255]))
+        mask_warm2 = cv2.inRange(hsv, np.array([158, 50, 50]), np.array([180, 255, 255]))
         mask_warm = cv2.bitwise_or(mask_warm1, mask_warm2)
 
-        # 2. Chromatic distance from the median ocean background color
+        # 2. Chromatic distance from median background ocean color
         median_a = np.median(lab[:, :, 1])
         median_b = np.median(lab[:, :, 2])
         chroma_diff = np.sqrt((lab[:, :, 1].astype(float) - median_a)**2 + (lab[:, :, 2].astype(float) - median_b)**2)
-        chroma_mask = (chroma_diff > 18.0).astype(np.uint8) * 255
+        chroma_mask = (chroma_diff > 16.0).astype(np.uint8) * 255
 
-        # 3. Morphological Tophat (bright foreground objects) & Blackhat (dark wetsuits on water)
+        # 3. Morphological Tophat (bright foreground) & Blackhat (dark wetsuits)
         gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
-        blur = cv2.GaussianBlur(gray, (9, 9), 0)
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (31, 31))
+        blur = cv2.GaussianBlur(gray, (7, 7), 0)
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (25, 25))
         tophat = cv2.morphologyEx(blur, cv2.MORPH_TOPHAT, kernel)
         blackhat = cv2.morphologyEx(blur, cv2.MORPH_BLACKHAT, kernel)
-        _, mask_th = cv2.threshold(tophat, 35, 255, cv2.THRESH_BINARY)
-        _, mask_bh = cv2.threshold(blackhat, 35, 255, cv2.THRESH_BINARY)
+        _, mask_th = cv2.threshold(tophat, 30, 255, cv2.THRESH_BINARY)
+        _, mask_bh = cv2.threshold(blackhat, 30, 255, cv2.THRESH_BINARY)
 
         saliency = cv2.bitwise_or(mask_warm, cv2.bitwise_or(chroma_mask, cv2.bitwise_or(mask_th, mask_bh)))
 
-        # 4. Suppress low-saturation white seafoam and elongated wave crests
-        seafoam_mask = cv2.inRange(hsv, np.array([0, 0, 215]), np.array([180, 45, 255]))
+        # 4. Suppress low-saturation white seafoam / whitecaps
+        seafoam_mask = cv2.inRange(hsv, np.array([0, 0, 215]), np.array([180, 42, 255]))
         saliency[seafoam_mask > 0] = 0
 
-        kernel_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (17, 17))
+        kernel_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15, 15))
         closed = cv2.morphologyEx(saliency, cv2.MORPH_CLOSE, kernel_close)
 
         contours, _ = cv2.findContours(closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -57,21 +57,24 @@ class PrecisionSwimmerAnnotator:
         candidates = []
         for cnt in contours:
             area = cv2.contourArea(cnt)
-            if 100 <= area <= 24000:
+            # Swimmers at 40m-100m are compact (80 to 8000 pixels)
+            if 80 <= area <= 8500:
                 x, y, bw, bh = cv2.boundingRect(cnt)
                 aspect = max(bw, bh) / max(1.0, min(bw, bh))
-                if aspect <= 2.8:
+                if aspect <= 2.6:
                     roi_warm = mask_warm[y:y+bh, x:x+bw]
                     warm_density = np.sum(roi_warm > 0) / float(max(1, bw * bh))
                     
                     roi_saliency = saliency[y:y+bh, x:x+bw]
                     sal_density = np.sum(roi_saliency > 0) / float(max(1, bw * bh))
 
-                    # Prioritize rescue colors and compact high-density blobs
-                    score = area * (1.0 + warm_density * 15.0 + sal_density * 5.0)
+                    # Size-normalized score: density & compactness drive selection, NOT raw pixel area!
+                    compact_bonus = 1.0 / (aspect + 0.1)
+                    size_penalty = 1.0 if area < 4000 else (4000.0 / area)
+                    score = ((warm_density * 60.0) + (sal_density * 25.0) + (compact_bonus * 10.0)) * size_penalty
 
-                    pad_x = int(bw * 0.20)
-                    pad_y = int(bh * 0.20)
+                    pad_x = int(bw * 0.22)
+                    pad_y = int(bh * 0.22)
                     xmin = max(0, x - pad_x)
                     ymin = max(0, y - pad_y)
                     xmax = min(w - 1, x + bw + pad_x)
@@ -101,6 +104,7 @@ class PrecisionSwimmerAnnotator:
                 if len(selected) >= target_count:
                     break
 
+        # Fallback to center region if detection fails completely
         if not selected:
             return [(int(w*0.42), int(h*0.42), int(w*0.58), int(h*0.58))]
 
@@ -169,7 +173,7 @@ class PrecisionSwimmerAnnotator:
 </head>
 <body>
     <h1>Swimmer Bounding Box Inspection Gallery</h1>
-    <div class="subtitle">Adaptive Background Chromatic Saliency & High-Visibility Color Ranking</div>
+    <div class="subtitle">Size-Normalized Chromatic & High-Visibility Saliency Detection</div>
     <div class="grid">
 """)
             for ann in annotations:

@@ -3,7 +3,7 @@
 Bulk Synthetic Swimmer Dataset Generator & Automated Annotator
 Generates X amount of images using modular prompts (varied altitude, lighting, water, attire)
 and automatically outputs YOLO labels + inspection gallery.
-Includes safe auto-incrementing filenames and non-destructive metadata merging.
+Includes safe auto-incrementing filenames and real-time per-image metadata saving.
 """
 
 import os
@@ -84,13 +84,13 @@ def generate_bulk(num_images: int, output_dir: str, steps: int = 25, model_path:
         metadata.append(mod)
         annotations.append(ann)
 
-    with open(meta_file, "w") as f:
-        json.dump(metadata, f, indent=2)
+        with open(meta_file, "w") as f:
+            json.dump(metadata, f, indent=2)
+        with open(coco_file, "w") as f:
+            json.dump(annotations, f, indent=2)
+        annotator.export_html_gallery(annotations)
 
-    with open(coco_file, "w") as f:
-        json.dump(annotations, f, indent=2)
-
-    html_file = annotator.export_html_gallery(annotations)
+    html_file = os.path.join(output_dir, "annotated_gallery.html")
 
     print("\n=========================================================================")
     print(f"[SUCCESS] Safe bulk generation of {num_images} images completed in {time.time()-total_t0:.1f}s!")
