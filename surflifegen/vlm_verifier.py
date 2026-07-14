@@ -1,15 +1,17 @@
 """
-Apple Silicon Native Vision-Language Model (VLM) + Computer Vision Hybrid Verifier
+Apple Silicon Native MLX + LM Studio (Qwen 3.6 / OpenAI API) Hybrid Vision-Language Verifier.
 Three-Stage Architecture:
 1. Stage 1 (CV Candidate Detection): Programmatic morphological candidate extraction.
 2. Stage 2 (Marked-Box Patch Verification): Zoomed context patch with marked red bounding box checked via YES/NO VLM query.
-3. Stage 3 (Global Holistic Audit & Recovery): Full-frame check confirming all humans/sharks are boxed, recovering any missed targets from Stage 1 candidates.
+3. Stage 3 (Global Holistic Audit & Recovery): Full-frame check confirming all targets are boxed, powered by local MLX or LM Studio (e.g., Qwen 3.6 35B reasoning model) to recover any missed targets.
 """
 
 import os
 import re
 import json
 import time
+import base64
+import urllib.request
 import cv2
 from typing import List, Dict, Any, Tuple
 from PIL import Image
@@ -27,18 +29,84 @@ DEFAULT_VLM_MODEL = "mlx-community/Qwen2.5-VL-7B-Instruct-4bit"
 
 class VLMTagVerifier:
     """
-    Hybrid Computer Vision + Qwen VL Three-Stage Verifier for Surf Life Saving datasets.
+    Hybrid Computer Vision + Qwen VL / LM Studio Three-Stage Verifier for Surf Life Saving datasets.
     Guarantees 100% detection coverage and zero coordinate hallucinations.
     """
-    def __init__(self, model_path: str = DEFAULT_VLM_MODEL):
-        if not MLX_VLM_AVAILABLE:
-            raise RuntimeError("mlx-vlm is not installed. Run: pip install mlx-vlm")
-        
-        print(f"[VLM Verifier] Loading Apple Silicon MLX Vision Model: {model_path} ...")
-        t0 = time.time()
-        self.model, self.processor = load(model_path)
-        self.config = load_config(model_path)
-        print(f"[VLM Verifier] Loaded VLM successfully in {time.time()-t0:.1f}s")
+    def __init__(
+        self,
+        model_path: str = DEFAULT_VLM_MODEL,
+        backend: str = "mlx",
+        lmstudio_url: str = "http://localhost:1234/v1/chat/completions",
+        lmstudio_model: str = "qwen/qwen3.6-35b-a3b",
+        audit_backend: str = None,
+        audit_model: str = None
+    ):
+        self.backend = backend.lower() if backend else "mlx"
+        if model_path and model_path.lower() == "lmstudio":
+            self.backend = "lmstudio"
+
+        self.lmstudio_url = lmstudio_url
+        self.lmstudio_model = lmstudio_model
+        self.audit_backend = (audit_backend.lower() if audit_backend else self.backend)
+        self.audit_model = audit_model or self.lmstudio_model
+
+        # Only load MLX model into memory if MLX backend is requested for Stage 2 or Stage 3
+        self.model = None
+        self.processor = None
+        self.config = None
+
+        if self.backend == "mlx" or self.audit_backend == "mlx":
+            if not MLX_VLM_AVAILABLE:
+                raise RuntimeError("mlx-vlm is not installed. Run: pip install mlx-vlm or use --backend lmstudio")
+            
+            print(f"[VLM Verifier] Loading Apple Silicon MLX Vision Model: {model_path} ...")
+            t0 = time.time()
+            self.model, self.processor = load(model_path)
+            self.config = load_config(model_path)
+            print(f"[VLM Verifier] Loaded MLX VLM successfully in {time.time()-t0:.1f}s")
+        else:
+            print(f"[VLM Verifier] Using LM Studio backend -> URL: {self.lmstudio_url} (Model: {self.lmstudio_model})")
+
+    def _generate_lmstudio(self, image_path: str, prompt: str, max_tokens: int = 4096, model_id: str = None) -> Tuple[str, str]:
+        """
+        Sends an image and text prompt to an LM Studio (or OpenAI-compatible) local endpoint.
+        Returns (content, reasoning_content).
+        """
+        model_name = model_id or self.lmstudio_model
+        with open(image_path, "rb") as f:
+            b64_img = base64.b64encode(f.read()).decode("utf-8")
+
+        payload = {
+            "model": model_name,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64_img}"}}
+                    ]
+                }
+            ],
+            "max_tokens": max_tokens,
+            "temperature": 0.1
+        }
+
+        req = urllib.request.Request(
+            self.lmstudio_url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"}
+        )
+
+        try:
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                choice = data["choices"][0]["message"]
+                content = choice.get("content", "") or ""
+                reasoning = choice.get("reasoning_content", "") or ""
+                return content.strip(), reasoning.strip()
+        except Exception as e:
+            print(f"[LM Studio Error] Failed connecting to {self.lmstudio_url}: {e}")
+            return "", ""
 
     def verify_patch_vlm(self, patch_path: str, target_type: str = "swimmer") -> bool:
         """
@@ -48,6 +116,11 @@ class VLMTagVerifier:
             prompt = "Look at the object highlighted inside the red bounding box drawn in the center of this ocean patch. Is that highlighted object a submerged shark silhouette under the water? Answer only YES or NO."
         else:
             prompt = "Look at the object highlighted inside the red bounding box drawn in the center of this ocean patch. Is that highlighted object a human swimmer or person in the water? Answer only YES or NO."
+
+        if self.backend == "lmstudio":
+            content, reasoning = self._generate_lmstudio(patch_path, prompt, max_tokens=150, model_id=self.lmstudio_model)
+            full_text = f"{content}\n{reasoning}".upper()
+            return "YES" in full_text and "NO" not in full_text
 
         messages = [
             {"role": "user", "content": [
@@ -80,57 +153,84 @@ class VLMTagVerifier:
     def global_audit_and_recover(self, overview_path: str, verified_count: int, target_type: str = "swimmer") -> Tuple[List[int], str]:
         """
         Stage 3: Performs a global check of the annotated overview image.
+        Supports Qwen 3.6 / reasoning models in LM Studio or local MLX models.
         Confirms whether all targets are enclosed in bold green boxes, and recovers any candidate IDs (#1, #2, etc.) that were missed.
         """
         if target_type == "shark":
-            prompt = (
-                "We are auditing an automated aerial shark detection system. "
-                "In this photograph, bold green boxes enclose confirmed verified sharks, and yellow numbered boxes (#1, #2, etc.) enclose unverified candidate detections.\n"
-                "First, check: are all submerged sharks under the water across the entire image already enclosed inside a green box?\n"
-                "If ALL submerged sharks are inside green boxes, output exactly: GLOBAL_STATUS: ALL_BOXED.\n"
-                "If there is any submerged shark that is NOT inside a green box, check which yellow box number (#1, #2, etc.) encloses it, and output: RECOVER: [box_num_1, box_num_2]."
-            )
+            if verified_count == 0:
+                prompt = (
+                    "We are auditing an automated aerial shark detection system. "
+                    "In this photograph, candidate detections are highlighted with numbered yellow bounding boxes (#1, #2, etc.). Currently no boxes are confirmed.\n"
+                    "First, carefully count exactly how many submerged sharks under the water are visible across the entire photograph.\n"
+                    "Second, list ONLY the exact yellow box numbers (#1, #2, etc.) that enclose actual submerged sharks in format: RECOVER: [box_num_1, box_num_2]."
+                )
+            else:
+                prompt = (
+                    "We are auditing an automated aerial shark detection system. "
+                    "In this photograph, bold green boxes enclose confirmed verified sharks, and yellow numbered boxes (#1, #2, etc.) enclose unverified candidate detections.\n"
+                    "First, count carefully how many submerged sharks under the water are visible in total across the entire photograph.\n"
+                    "Second, check: are all submerged sharks already enclosed inside a bold green box?\n"
+                    "If ALL submerged sharks across the image are already inside green boxes, output exactly: GLOBAL_STATUS: ALL_BOXED.\n"
+                    "If there is any submerged shark that is NOT inside a green box, inspect the yellow numbered boxes (#1, #2, etc.) and output the exact yellow box number(s) that enclose the missing shark(s) in format: RECOVER: [box_num_1, box_num_2]."
+                )
         else:
-            prompt = (
-                "We are auditing an automated aerial swimmer detection system. "
-                "In this photograph, bold green boxes enclose confirmed verified human swimmers, and yellow numbered boxes (#1, #2, etc.) enclose unverified candidate detections.\n"
-                "First, check: are all human swimmers or people treading water across the entire image already enclosed inside a bold green box?\n"
-                "If ALL human swimmers are inside green boxes, output exactly: GLOBAL_STATUS: ALL_BOXED.\n"
-                "If there is any human swimmer that is NOT inside a green box, check which yellow box number (#1, #2, etc.) encloses that missing swimmer, and output: RECOVER: [box_num_1, box_num_2]."
+            if verified_count == 0:
+                prompt = (
+                    "We are auditing an automated aerial swimmer detection system. "
+                    "In this photograph, candidate detections are highlighted with numbered yellow bounding boxes (#1, #2, etc.). Currently no boxes are confirmed.\n"
+                    "First, carefully count exactly how many human swimmers or people floating in the water are visible across the entire photograph.\n"
+                    "Second, list ONLY the exact yellow box numbers (#1, #2, etc.) that enclose actual human swimmers in format: RECOVER: [box_num_1, box_num_2]."
+                )
+            else:
+                prompt = (
+                    "We are auditing an automated aerial swimmer detection system. "
+                    "In this photograph, bold green boxes enclose confirmed verified human swimmers, and yellow numbered boxes (#1, #2, etc.) enclose unverified candidate detections.\n"
+                    "First, count carefully how many human swimmers or people floating in the water are visible in total across the entire photograph.\n"
+                    "Second, check: are all human swimmers across the photograph already enclosed inside a bold green box?\n"
+                    "If ALL human swimmers across the photograph are already inside bold green boxes, output exactly: GLOBAL_STATUS: ALL_BOXED.\n"
+                    "If there is any human swimmer that is NOT inside a green box, inspect the yellow numbered boxes (#1, #2, etc.) and output the exact yellow box number(s) that enclose the missing swimmer(s) in format: RECOVER: [box_num_1, box_num_2]."
+                )
+
+        if self.audit_backend == "lmstudio":
+            content, reasoning = self._generate_lmstudio(overview_path, prompt, max_tokens=4096, model_id=self.audit_model)
+            full_ans = f"{content}\n{reasoning}"
+        else:
+            messages = [
+                {"role": "user", "content": [
+                    {"type": "image"},
+                    {"type": "text", "text": prompt}
+                ]}
+            ]
+
+            if hasattr(self.processor, "apply_chat_template"):
+                formatted_prompt = self.processor.apply_chat_template(messages, add_generation_prompt=True)
+            else:
+                formatted_prompt = f"<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>{prompt}<|im_end|>\n<|im_start|>assistant\n"
+
+            output = generate(
+                self.model,
+                self.processor,
+                image=overview_path,
+                prompt=formatted_prompt,
+                max_tokens=100,
+                temperature=0.1
             )
 
-        messages = [
-            {"role": "user", "content": [
-                {"type": "image"},
-                {"type": "text", "text": prompt}
-            ]}
-        ]
+            output_text = getattr(output, "text", None)
+            if output_text is None:
+                output_text = output if isinstance(output, str) else str(output)
+            full_ans = output_text.strip()
 
-        if hasattr(self.processor, "apply_chat_template"):
-            formatted_prompt = self.processor.apply_chat_template(messages, add_generation_prompt=True)
-        else:
-            formatted_prompt = f"<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>{prompt}<|im_end|>\n<|im_start|>assistant\n"
-
-        output = generate(
-            self.model,
-            self.processor,
-            image=overview_path,
-            prompt=formatted_prompt,
-            max_tokens=80,
-            temperature=0.1
-        )
-
-        output_text = getattr(output, "text", None)
-        if output_text is None:
-            output_text = output if isinstance(output, str) else str(output)
-
-        ans = output_text.strip()
         recovered_ids = []
         
-        # Parse RECOVER: [idx1, idx2]
-        match = re.search(r"RECOVER:\s*\[([0-9,\s]+)\]", ans, re.IGNORECASE)
+        # Parse RECOVER: [idx1, idx2] or Boxes: 1, 3 or SWIMMERS: [idx1, idx2] across content and reasoning
+        match = re.search(r"RECOVER:\s*\[([0-9,\s]+)\]", full_ans, re.IGNORECASE)
         if not match:
-            match = re.search(r"\[([0-9,\s]+)\]", ans)
+            match = re.search(r"SWIMMERS:\s*\[([0-9,\s]+)\]", full_ans, re.IGNORECASE)
+        if not match:
+            match = re.search(r"Boxes:\s*([0-9,\s]+)", full_ans, re.IGNORECASE)
+        if not match:
+            match = re.search(r"\[([0-9,\s]+)\]", full_ans)
             
         if match:
             try:
@@ -139,14 +239,14 @@ class VLMTagVerifier:
             except Exception:
                 pass
 
-        return recovered_ids, ans
+        return recovered_ids, full_ans.strip()
 
     def detect_targets_vlm(self, image_path: str, target_type: str = "swimmer") -> Tuple[List[Tuple[int, int, int, int]], str]:
         """
         Three-Stage Hybrid Detection Engine:
         1. Stage 1 (CV Candidates): Extracts precise physical candidate boxes.
         2. Stage 2 (Marked-Box Verification): Crops context with marked red box, runs binary YES/NO query.
-        3. Stage 3 (Global Audit & Recovery): Checks full image globally to ensure all targets are boxed and recovers missing items.
+        3. Stage 3 (Global Audit & Recovery): Checks full image globally via MLX or LM Studio (Qwen 3.6) to ensure all targets are boxed and recovers missing items.
         """
         img_cv = cv2.imread(image_path)
         h, w = img_cv.shape[:2]
@@ -191,7 +291,7 @@ class VLMTagVerifier:
             except OSError:
                 pass
 
-        # Stage 3: Global Holistic Audit & Missing Target Recovery
+        # Stage 3: Global Holistic Audit & Missing Target Recovery via local MLX or LM Studio (Qwen 3.6)
         temp_overview = os.path.join(os.path.dirname(image_path), "_temp_global_audit.png")
         overview_img = img_cv.copy()
         
@@ -222,9 +322,10 @@ class VLMTagVerifier:
                     verified_boxes.append(rec_box)
                     recovered_count += 1
 
+        backend_label = f"LM Studio ({self.audit_model})" if self.audit_backend == "lmstudio" else "MLX"
         summary_text = (
             f"Stage 1: {len(candidates)} candidates | Stage 2: Verified {len(verified_boxes) - recovered_count} ({', '.join(answers[:6])}) | "
-            f"Stage 3 Global Audit: Recovered {recovered_count} box(es) -> Total Verified {target_type.title()}s: {len(verified_boxes)}"
+            f"Stage 3 ({backend_label} Audit): Recovered {recovered_count} box(es) -> Total Verified {target_type.title()}s: {len(verified_boxes)}"
         )
         return verified_boxes, summary_text
 

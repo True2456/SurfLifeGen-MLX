@@ -49,6 +49,12 @@ class PrecisionSwimmerAnnotator:
             mask_warm2 = cv2.inRange(hsv, np.array([158, 55, 55]), np.array([180, 255, 255]))
             mask_warm = cv2.bitwise_or(mask_warm1, mask_warm2)
 
+            lab = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2Lab)
+            median_a = np.median(lab[:, :, 1])
+            median_b = np.median(lab[:, :, 2])
+            chroma_diff = np.sqrt((lab[:, :, 1].astype(float) - median_a)**2 + (lab[:, :, 2].astype(float) - median_b)**2)
+            chroma_mask = (chroma_diff > 14.0).astype(np.uint8) * 255
+
             blur = cv2.GaussianBlur(gray, (7, 7), 0)
             kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (25, 25))
             tophat = cv2.morphologyEx(blur, cv2.MORPH_TOPHAT, kernel)
@@ -56,8 +62,8 @@ class PrecisionSwimmerAnnotator:
             _, mask_th = cv2.threshold(tophat, 24, 255, cv2.THRESH_BINARY)
             _, mask_bh = cv2.threshold(blackhat, 24, 255, cv2.THRESH_BINARY)
 
-            # Combined without chroma noise
-            saliency = cv2.bitwise_or(mask_warm, cv2.bitwise_or(mask_th, mask_bh))
+            # Combined with chroma contrast to isolate swimmers across all altitudes
+            saliency = cv2.bitwise_or(mask_warm, cv2.bitwise_or(chroma_mask, cv2.bitwise_or(mask_th, mask_bh)))
             saliency[seafoam_mask > 0] = 0
 
             # Suppress 2% image border to eliminate boundary artifacts
@@ -76,7 +82,7 @@ class PrecisionSwimmerAnnotator:
         candidates = []
         for cnt in contours:
             area = cv2.contourArea(cnt)
-            min_area = 110 if target_type == "shark" else 35
+            min_area = 110 if target_type == "shark" else 28
             max_area = 15000 if target_type == "shark" else 10000
 
             if min_area <= area <= max_area:
@@ -96,8 +102,8 @@ class PrecisionSwimmerAnnotator:
                     score = (sal_density * 90.0) + (warm_density * 280.0) + (solidity * 75.0)
 
                     if score >= min_score:
-                        pad_x = max(4, int(bw * 0.15))
-                        pad_y = max(4, int(bh * 0.15))
+                        pad_x = max(12, int(bw * 0.35))
+                        pad_y = max(12, int(bh * 0.35))
                         xmin = max(0, x - pad_x)
                         ymin = max(0, y - pad_y)
                         xmax = min(w - 1, x + bw + pad_x)
