@@ -7,19 +7,15 @@ attire, and lighting while strictly avoiding drone/camera object nouns.
 import random
 from typing import Dict, Any, Tuple
 
-ALTITUDES = [40, 50, 60, 75, 85, 90, 100, 120, 135, 150]
+ALTITUDES = [80, 90, 100, 100, 100, 110, 120]  # Weighted toward 100 meters
 
 SWIMMER_CONFIGS = [
-    (1, "a single human swimmer actively swimming freestyle with arm splashing"),
-    (1, "one person swimming vigorously with breaststroke kicks across the water"),
-    (1, "a lone swimmer swimming actively through open ocean swell"),
-    (1, "a single human swimmer treading water and splashing arms"),
-    (2, "two swimmers actively swimming freestyle side by side across the swell"),
-    (2, "two swimmers swimming vigorously in formation across a rip current"),
-    (2, "two people swimming actively through turquoise coastal water"),
-    (3, "three swimmers swimming actively in different directions across the ocean"),
-    (3, "three people swimming freestyle and breaststroke spaced apart"),
-    (4, "a group of four swimmers swimming actively together across open water"),
+    (1, "a single human swimmer actively swimming or splashing across coastal ocean water"),
+    (2, "two human swimmers actively swimming or splashing across coastal ocean water"),
+    (3, "multiple human swimmers actively swimming or splashing across coastal ocean water"),
+    (4, "a group of four human swimmers actively swimming or splashing across coastal ocean water"),
+    (2, "two people actively swimming freestyle side by side across ocean swell"),
+    (3, "three swimmers swimming vigorously across a rip current channel"),
 ]
 
 ATTIRE_OPTIONS = [
@@ -32,7 +28,7 @@ ATTIRE_OPTIONS = [
 ]
 
 WATER_CONDITIONS = [
-    "clear turquoise open coastal ocean water with gentle swell ripples",
+    "coastal ocean water with gentle swell ripples",
     "deep azure ocean swell outside breaking sandbar waves",
     "emerald green coastal ocean water with subtle surface texture",
     "a sandy ocean rip current channel between white surf sandbanks",
@@ -51,7 +47,7 @@ LIGHTING_CONDITIONS = [
 def generate_modular_prompt() -> Dict[str, Any]:
     """
     Generates a modular, high-standard synthetic aerial prompt and associated metadata.
-    Guarantees zero drone/aircraft noun hallucinations.
+    Guarantees zero drone/aircraft noun hallucinations and strictly follows anatomical rules.
     """
     altitude = random.choice(ALTITUDES)
     swimmer_count, swimmer_desc = random.choice(SWIMMER_CONFIGS)
@@ -62,8 +58,8 @@ def generate_modular_prompt() -> Dict[str, Any]:
     prompt = (
         f"Direct overhead nadir photograph looking straight down from {altitude} meters altitude "
         f"above sea level showing {swimmer_desc} in {water} {lighting}. "
-        f"Each swimmer is {attire}. Clean anatomically realistic human silhouette separated "
-        f"from white seafoam, high optical resolution aerial photography"
+        f"Each swimmer is {attire} and partially submerged. Make sure humans have no extra limbs. "
+        f"Clean distinct human silhouettes visible against coastal ocean swell and seafoam, high optical resolution aerial photography"
     )
 
     return {

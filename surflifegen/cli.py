@@ -16,7 +16,7 @@ from .prompt_builder import generate_modular_prompt
 from .shark_prompt_builder import generate_shark_prompt
 
 DEFAULT_PROMPTS = [
-    ("nadir_90m_midday_red_vest.png", "Direct overhead nadir photograph looking straight down from 90 meters altitude over open coastal ocean water at a single human swimmer treading water. Swimmer wears a high-visibility red-and-yellow lifeguard rash vest. Clean distinct swimmer silhouette visible against turquoise ocean water, realistic seafoam and swell ripples, high optical resolution aerial photography", 1),
+    ("nadir_100m_active_swimmers_default.png", "Direct overhead nadir photograph from 100 meters altitude above sea level showing multiple human swimmers actively swimming or splashing across coastal ocean water. Each swimmer is partially submerged. Make sure humans have no extra limbs. Clean distinct human silhouettes visible against coastal ocean swell and seafoam, high optical resolution aerial photography", 3),
     ("nadir_100m_two_swimmers_orange.png", "Straight-down overhead photograph from 100 meters altitude above sea level showing two swimmers floating side by side in deep azure ocean swell outside breaking sandbar waves. Both swimmers wear high-contrast orange safety rash vests, clear head and shoulder silhouettes separated from white water", 2),
     ("nadir_85m_golden_hour_swimmer.png", "Overhead high-altitude photograph taken from 85 meters height capturing a single person swimming in gentle coastal swell during morning golden hour. Crisp human silhouette treading water against warm solar light reflections on blue seawater", 1),
 ]
@@ -91,9 +91,11 @@ def main():
                 mod = generate_shark_prompt()
             else:
                 mod = generate_modular_prompt()
+            
+            prompt_text = args.prompt if args.prompt else mod["prompt"]
             filename = f"{prefix}{idx:04d}_alt{mod['altitude_m']}m.png"
             target_cnt = mod.get("shark_count", mod.get("swimmer_count", 100))
-            prompts.append((filename, mod["prompt"], target_cnt, mod))
+            prompts.append((filename, prompt_text, target_cnt, mod))
     elif args.prompt:
         prompts = [("custom_generation.png", args.prompt, args.count, None)]
     else:
