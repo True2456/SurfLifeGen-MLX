@@ -1,19 +1,19 @@
 # SurfLifeGen-MLX
 
-High-Altitude Synthetic Aerial Maritime & Surf Life Saving Dataset Generator with Precision Automated YOLO Bounding Box Annotation and Native Vision-Language Model (VLM) Tag Verification, powered by native Apple Silicon MLX 8-Bit Quantized Cosmos 3 Omni and Qwen2.5-VL.
+High-Altitude Synthetic Aerial Maritime & Surf Life Saving Dataset Generator with Precision Automated YOLO Bounding Box Annotation and Native Vision-Language Model (VLM) Tag Verification, powered by native Apple Silicon MLX 8-Bit Quantized Cosmos 3 Omni and Qwen3-VL.
 
 ---
 
 ## Overview
 
-SurfLifeGen-MLX is a specialized synthetic data generation, automated annotation, and Vision-Language verification pipeline designed for Search and Rescue (SAR) drone vision models. It runs natively on Apple Silicon (M1 through M5 Max/Ultra) using optimized `mlx` kernels to synthesize realistic aerial nadir maritime imagery at patrol altitudes (40 to 100 meters) and verify spatial bounding box tags.
+SurfLifeGen-MLX is a specialized synthetic data generation, automated annotation, and Vision-Language verification pipeline designed for Search and Rescue (SAR) and Shark Patrol drone vision models. It runs natively on Apple Silicon (M1 through M5 Max/Ultra) using optimized `mlx` kernels to synthesize realistic aerial nadir maritime imagery at patrol altitudes (40 to 100 meters) for both **Swimmers** and **Submerged Sharks**.
 
 ### Key Features
 
 - **Apple Silicon Native Inference:** Built on Apple MLX 8-bit quantization for high-speed local generation (~25 seconds per 1024x768 image on M-series Max chips).
-- **Qwen2.5-VL Native Tag Verifier:** Integrated Vision-Language Model verification (`surflifegen-verify`) running natively via `mlx-vlm` to visually inspect generated photos, verify swimmer counts, and correct YOLO bounding box coordinates.
-- **Modular Prompt Engine:** Dynamically generates high-variance coastal search-and-rescue scenarios (altitude, lighting, water conditions, rescue attire) while eliminating aircraft noun hallucinations.
-- **Precision Automated Annotation:** Size-normalized chromatic background subtraction and morphological filtering to localize swimmers and suppress seafoam.
+- **Dual Target Modes (`--target swimmer` | `--target shark`):** Specialized prompt engines for high-visibility rescue swimmers and submerged coastal marine predators (Great White, Bull Shark, Tiger Shark, Bronze Whaler) under transparent coastal water.
+- **Qwen3-VL Native Tag Verifier:** Integrated Vision-Language Model verification (`surflifegen-verify`) running natively via `mlx-vlm` to visually inspect generated photos, verify target counts, and correct YOLO bounding box coordinates.
+- **Modular Prompt Engine:** Dynamically generates high-variance coastal search-and-rescue scenarios (altitude, lighting, water transparency, seabed contrast) while eliminating aircraft noun hallucinations.
 - **Real-Time Checkpointing:** Saves and appends dataset metadata and YOLO annotations after every single image so generation can be safely paused and resumed anytime.
 
 ---
@@ -53,76 +53,55 @@ brew install --build-from-source https://raw.githubusercontent.com/True2456/Surf
 
 Once installed, two global CLI commands are available: `surflifegen` and `surflifegen-verify`.
 
-### 1. Bulk Modular Dataset Generation
+### 1. Bulk Submerged Shark Dataset Generation (`--target shark`)
 
-Generate an arbitrary number of synthetic images with varied altitudes (40m to 100m), water states, and rescue attire, automatically exporting YOLO label files:
+Generate synthetic aerial patrol photographs of submerged marine predators (sharks cruising 1-3m below turquoise water over sandy sea floors or drop-offs):
 
 ```bash
-surflifegen --bulk-count 100 --output-dir ./bulk_swimmer_dataset --steps 25
+surflifegen --target shark --bulk-count 50 --output-dir ./shark_aerial_dataset --steps 25
 ```
 
-### 2. VLM Automated Tag Verification & Correction (`surflifegen-verify`)
+### 2. Bulk Swimmer Dataset Generation (`--target swimmer`)
 
-Use native Apple Silicon MLX Qwen2.5-VL (`Qwen2.5-VL-7B-Instruct-4bit`) to inspect every image in your dataset folder, verify/correct swimmer bounding box tags, and generate an HTML verification report:
+Generate synthetic aerial Search and Rescue images of swimmers wearing high-visibility lifeguard rash vests:
 
 ```bash
-surflifegen-verify --dataset-dir ./bulk_swimmer_dataset
+surflifegen --target swimmer --bulk-count 100 --output-dir ./bulk_swimmer_dataset --steps 25
 ```
 
-### 3. Specifying Local Model Path vs. Automatic Download
+### 3. VLM Automated Tag Verification & Correction (`surflifegen-verify`)
 
-By default, `surflifegen` checks local search paths and automatically fetches model weights from Hugging Face Hub (`True2456/Cosmos3-Nano-MLX-8bit`) if not found.
-
-To specify an explicit local model path:
+Use native Apple Silicon MLX Qwen3-VL (`Qwen3-VL-30B-A3B-Instruct-4bit`) to inspect every image in your dataset folder, verify/correct bounding box tags, and generate an HTML verification report:
 
 ```bash
-surflifegen \
-  --model-path /path/to/Cosmos3-Nano-MLX-8bit \
-  --bulk-count 50 \
-  --output-dir ./dataset_output
+surflifegen-verify --dataset-dir ./shark_aerial_dataset
 ```
 
 ---
 
 ## Python API Usage
 
-You can integrate SurfLifeGen-MLX and the VLM Verifier directly into Python pipelines:
+You can integrate SurfLifeGen-MLX directly into Python pipelines:
 
 ```python
-from surflifegen import SurfLifeGenPipeline, PrecisionSwimmerAnnotator, VLMTagVerifier, generate_modular_prompt
+from surflifegen import SurfLifeGenPipeline, PrecisionSwimmerAnnotator, VLMTagVerifier, generate_shark_prompt
 
-# 1. Generate & Annotate
+# 1. Generate & Annotate Submerged Shark Photo
 pipeline = SurfLifeGenPipeline(auto_download=True)
-annotator = PrecisionSwimmerAnnotator(output_dir="./output_dataset")
+annotator = PrecisionSwimmerAnnotator(output_dir="./shark_dataset")
 
-config = generate_modular_prompt()
+config = generate_shark_prompt(altitude_m=75)
+print("Shark Prompt:", config["prompt"])
+
 image = pipeline.generate(prompt=config["prompt"], width=1024, height=768, steps=25)
-image_path = "./output_dataset/sample_swimmer.png"
+image_path = "./shark_dataset/sample_shark.png"
 image.save(image_path)
-annotation = annotator.annotate_image(image_path, target_count=config["swimmer_count"])
 
-# 2. Verify & Correct Tags with Qwen2.5-VL Native VLM
+annotation = annotator.annotate_image(image_path, target_count=config["shark_count"])
+
+# 2. Verify with Qwen3-VL Native VLM
 verifier = VLMTagVerifier()
-audit = verifier.verify_and_correct_dataset("./output_dataset")
-print("VLM Audit HTML Report:", audit["report_file"])
-```
-
----
-
-## Dataset Output Format
-
-Each dataset run produces a structured directory ready for YOLO model training or automated validation:
-
-```text
-dataset_output/
-├── *.png                     # High-resolution aerial nadir photographs
-├── labels/                   # YOLO format coordinate files (.txt)
-│   └── sample_swimmer.txt    # Format: class_id x_center y_center width height
-├── annotated_previews/       # Visual inspection PNGs with overlaid bounding boxes
-├── vlm_verified_previews/    # VLM audited & corrected bounding box previews
-├── dataset_metadata.json     # Complete prompt and generation parameter metadata
-├── annotated_gallery.html    # Standalone HTML gallery for visual batch review
-└── vlm_verification_report.html # Qwen2.5-VL visual audit & tag verification report
+audit = verifier.verify_and_correct_dataset("./shark_dataset")
 ```
 
 ---

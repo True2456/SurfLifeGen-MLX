@@ -1,6 +1,7 @@
 """
 Command Line Interface for SurfLifeGen-MLX
-Supports safe auto-incrementing filenames and real-time per-image metadata/annotation saving.
+Supports safe auto-incrementing filenames, real-time per-image metadata saving,
+and target selection (--target swimmer OR --target shark).
 """
 
 import os
@@ -12,6 +13,7 @@ import json
 from .generator import SurfLifeGenPipeline
 from .annotator import PrecisionSwimmerAnnotator
 from .prompt_builder import generate_modular_prompt
+from .shark_prompt_builder import generate_shark_prompt
 
 DEFAULT_PROMPTS = [
     ("nadir_90m_midday_red_vest.png", "Direct overhead nadir photograph looking straight down from 90 meters altitude over open coastal ocean water at a single human swimmer treading water. Swimmer wears a high-visibility red-and-yellow lifeguard rash vest. Clean distinct swimmer silhouette visible against turquoise ocean water, realistic seafoam and swell ripples, high optical resolution aerial photography", 1),
@@ -34,14 +36,15 @@ def get_next_start_index(output_dir: str, prefix: str = "bulk_") -> int:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="SurfLifeGen-MLX: Native Apple Silicon MLX 8-Bit Swimmer Dataset Generator & YOLO Annotator"
+        description="SurfLifeGen-MLX: Native Apple Silicon MLX 8-Bit Swimmer & Submerged Shark Dataset Generator"
     )
+    parser.add_argument("--target", "-t", choices=["swimmer", "shark"], default="swimmer", help="Target class to synthesize: 'swimmer' or 'shark'")
     parser.add_argument("--output-dir", "-o", default="./surflife_dataset", help="Output directory for generated images and YOLO labels")
     parser.add_argument("--model-path", "-m", default=None, help="Path to local Cosmos3-Nano-MLX-8bit folder")
     parser.add_argument("--auto-download", action="store_true", default=True, help="Automatically download model from Hugging Face Hub if not found locally")
     parser.add_argument("--steps", "-s", type=int, default=25, help="Number of MLX inference steps per image (default: 25)")
     parser.add_argument("--prompt", "-p", type=str, default=None, help="Custom prompt to generate a single image")
-    parser.add_argument("--swimmer-count", "-c", type=int, default=1, help="Expected swimmer count for custom prompt annotation")
+    parser.add_argument("--count", "-c", type=int, default=1, help="Expected target count for custom prompt annotation")
     parser.add_argument("--bulk-count", "-n", type=int, default=None, help="Generate X amount of images using modular randomized prompt builder")
     parser.add_argument("--no-annotate", action="store_true", help="Skip automatic YOLO bounding box annotation")
 
@@ -72,21 +75,26 @@ def main():
             annotations = []
 
     if args.bulk_count:
-        start_idx = get_next_start_index(args.output_dir, prefix="bulk_")
+        prefix = f"bulk_{args.target}_"
+        start_idx = get_next_start_index(args.output_dir, prefix=prefix)
         end_idx = start_idx + args.bulk_count - 1
-        print(f"\n[SurfLifeGen-MLX] Safe Bulk Mode: Generating images #{start_idx:04d} to #{end_idx:04d} (No overwrites)")
+        print(f"\n[SurfLifeGen-MLX] Safe Bulk Mode ({args.target.upper()}S): Generating images #{start_idx:04d} to #{end_idx:04d}")
         prompts = []
         for idx in range(start_idx, start_idx + args.bulk_count):
-            mod = generate_modular_prompt()
-            filename = f"bulk_{idx:04d}_alt{mod['altitude_m']}m.png"
-            prompts.append((filename, mod["prompt"], mod["swimmer_count"], mod))
+            if args.target == "shark":
+                mod = generate_shark_prompt()
+            else:
+                mod = generate_modular_prompt()
+            filename = f"{prefix}{idx:04d}_alt{mod['altitude_m']}m.png"
+            target_cnt = mod.get("shark_count", mod.get("swimmer_count", 1))
+            prompts.append((filename, mod["prompt"], target_cnt, mod))
     elif args.prompt:
-        prompts = [("custom_generation.png", args.prompt, args.swimmer_count, None)]
+        prompts = [("custom_generation.png", args.prompt, args.count, None)]
     else:
         prompts = [(fn, txt, c, None) for fn, txt, c in DEFAULT_PROMPTS]
 
     for i, (filename, text, count, mod_meta) in enumerate(prompts, 1):
-        print(f"\n[{i}/{len(prompts)}] Generating {filename}...")
+        print(f"\n[{i}/{len(prompts)}] Generating {filename} ({args.target.upper()})...")
         t0 = time.time()
         img = pipe.generate(prompt=text, steps=args.steps)
         out_path = os.path.join(args.output_dir, filename)
@@ -102,9 +110,8 @@ def main():
         if annotator:
             ann = annotator.annotate_image(out_path, target_count=count)
             annotations.append(ann)
-            print(f"  -> Annotated {len(ann['detections'])} swimmer(s): {ann['yolo_label_file']}")
+            print(f"  -> Annotated {len(ann['detections'])} {args.target}(s): {ann['yolo_label_file']}")
 
-        # Save metadata and gallery immediately after every image so resuming never loses records
         if metadata:
             with open(meta_file, "w") as f:
                 json.dump(metadata, f, indent=2)
