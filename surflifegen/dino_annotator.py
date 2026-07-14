@@ -55,7 +55,7 @@ class GroundingDinoAnnotator:
         self.model.eval()
         print(f"[Grounding DINO] Loaded model successfully in {time.time() - t0:.2f}s")
 
-    def detect(self, image_path: str, target_type: str = "swimmer") -> List[Dict[str, Any]]:
+    def detect(self, image_path: str, target_type: str = "swimmer", detection_prompt: str = None) -> List[Dict[str, Any]]:
         """
         Runs Grounding DINO zero-shot detection on the image.
         Returns a list of dicts: [{'box': [x1, y1, x2, y2], 'score': float, 'label': str}, ...]
@@ -63,7 +63,9 @@ class GroundingDinoAnnotator:
         img_pil = Image.open(image_path).convert("RGB")
         w, h = img_pil.size
 
-        if target_type == "shark":
+        if detection_prompt:
+            text = detection_prompt
+        elif target_type == "shark":
             text = "submerged shark . shark in water . marine predator silhouette ."
         else:
             text = "swimmer . person floating in water . person in ocean ."
@@ -108,10 +110,10 @@ class GroundingDinoAnnotator:
         if not valid_boxes:
             return []
 
-        # Convert to tensors for NMS
-        t_boxes = torch.tensor(valid_boxes, dtype=torch.float32)
-        t_scores = torch.tensor(valid_scores, dtype=torch.float32)
-        keep_indices = torchvision.ops.nms(t_boxes, t_scores, iou_threshold=self.nms_iou_threshold)
+        # Run NMS (Non-Maximum Suppression) to remove duplicate overlapping boxes
+        boxes_t = torch.tensor(valid_boxes, dtype=torch.float32)
+        scores_t = torch.tensor(valid_scores, dtype=torch.float32)
+        keep_indices = torchvision.ops.nms(boxes_t, scores_t, self.nms_iou_threshold)
 
         detections = []
         for idx in keep_indices.tolist():
@@ -123,11 +125,11 @@ class GroundingDinoAnnotator:
 
         return detections
 
-    def annotate_image(self, image_path: str, output_path: str = None, target_type: str = "swimmer") -> Tuple[List[Dict[str, Any]], str]:
+    def annotate_image(self, image_path: str, output_path: str = None, target_type: str = "swimmer", detection_prompt: str = None) -> Tuple[List[Dict[str, Any]], str]:
         """
         Detects targets and writes an annotated copy of the image with clean bounding boxes.
         """
-        detections = self.detect(image_path, target_type=target_type)
+        detections = self.detect(image_path, target_type=target_type, detection_prompt=detection_prompt)
         img_bgr = cv2.imread(image_path)
 
         for i, det in enumerate(detections, 1):
@@ -153,7 +155,7 @@ class GroundingDinoAnnotator:
         summary = f"Detected {len(detections)} {target_type}(s) via Grounding DINO."
         return detections, summary
 
-    def annotate_dataset(self, dataset_dir: str, target_type: str = "swimmer"):
+    def annotate_dataset(self, dataset_dir: str, target_type: str = "swimmer", detection_prompt: str = None):
         """
         Batch annotates all PNG files in a dataset directory.
         """
@@ -174,7 +176,7 @@ class GroundingDinoAnnotator:
         for i, img_path in enumerate(valid_files, 1):
             base, ext = os.path.splitext(img_path)
             out_path = f"{base}_dino_annotated{ext}"
-            detections, summary = self.annotate_image(img_path, out_path, target_type=target_type)
+            detections, summary = self.annotate_image(img_path, out_path, target_type=target_type, detection_prompt=detection_prompt)
             total_targets += len(detections)
             print(f"[{i}/{len(valid_files)}] {os.path.basename(img_path)} -> {summary}")
 

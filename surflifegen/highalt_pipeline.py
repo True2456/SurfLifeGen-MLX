@@ -176,7 +176,8 @@ class HighAltitudeSwimmerPipeline:
         water_type: str = "turquoise_clear",
         img_width: int = 1024,
         img_height: int = 768,
-        filename_prefix: str = "highalt_scene"
+        filename_prefix: str = "highalt_scene",
+        detection_prompt: str = None
     ) -> Tuple[str, str, Dict[str, Any]]:
         """
         Synthesizes a high-altitude active swimmer scene and runs Grounding DINO zero-shot annotation.
@@ -244,7 +245,7 @@ class HighAltitudeSwimmerPipeline:
         dino_detections = []
         annotated_path = clean_path.replace(".png", "_dino.png")
         if self.annotator:
-            dino_detections, summary = self.annotator.annotate_image(clean_path, output_path=annotated_path, target_type="swimmer")
+            dino_detections, summary = self.annotator.annotate_image(clean_path, output_path=annotated_path, target_type="swimmer", detection_prompt=detection_prompt)
         else:
             cv2.imwrite(annotated_path, bg)
             summary = "Grounding DINO not available."

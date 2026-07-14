@@ -37,6 +37,7 @@ def main():
     parser.add_argument("--box-threshold", "--box-thresh", type=float, default=0.18, help="Detection sensitivity box threshold for Grounding DINO (lower = more sensitive, default: 0.18)")
     parser.add_argument("--text-threshold", "--text-thresh", type=float, default=0.18, help="Detection sensitivity text prompt threshold for Grounding DINO (default: 0.18)")
     parser.add_argument("--nms-threshold", "--iou-threshold", type=float, default=0.30, help="NMS IoU threshold for overlapping box removal (default: 0.30)")
+    parser.add_argument("--detection-prompt", "--dino-prompt", "-d", type=str, default=None, help="Custom dot-separated text queries for Grounding DINO zero-shot detection (e.g. 'swimmer . person splashing .')")
 
     args = parser.parse_args()
 
@@ -68,7 +69,8 @@ def main():
         clean_p, ann_p, meta = pipeline.generate_highalt_scene(
             altitude_m=args.altitude,
             swimmer_count=args.swimmers,
-            filename_prefix=f"highalt_{i:04d}"
+            filename_prefix=f"highalt_{i:04d}",
+            detection_prompt=args.detection_prompt
         )
         print(f"[{i - start_idx + 1}/{args.count}] Generated {os.path.basename(clean_p)} -> {meta.get('dino_summary')}")
 

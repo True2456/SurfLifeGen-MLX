@@ -53,6 +53,7 @@ def main():
     parser.add_argument("--box-threshold", "--box-thresh", type=float, default=0.22, help="Detection sensitivity box threshold for Grounding DINO (lower = more sensitive, default: 0.22)")
     parser.add_argument("--text-threshold", "--text-thresh", type=float, default=0.22, help="Detection sensitivity text prompt threshold for Grounding DINO (default: 0.22)")
     parser.add_argument("--nms-threshold", "--iou-threshold", type=float, default=0.30, help="NMS IoU threshold for overlapping box removal (default: 0.30)")
+    parser.add_argument("--detection-prompt", "--dino-prompt", "-d", type=str, default=None, help="Custom dot-separated text queries for Grounding DINO zero-shot detection (e.g. 'swimmer . person splashing .')")
 
     args = parser.parse_args()
 
@@ -143,7 +144,7 @@ def main():
 
         if annotator:
             annotated_path = out_path.replace(".png", "_annotated.png")
-            detections, summary = annotator.annotate_image(out_path, output_path=annotated_path, target_type=args.target)
+            detections, summary = annotator.annotate_image(out_path, output_path=annotated_path, target_type=args.target, detection_prompt=args.detection_prompt)
             ann_record = {
                 "image_file": filename,
                 "annotated_file": os.path.basename(annotated_path),
