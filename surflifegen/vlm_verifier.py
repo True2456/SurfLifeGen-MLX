@@ -1,6 +1,6 @@
 """
 Apple Silicon Native Vision-Language Model (VLM) Bounding Box Verifier & Corrector
-Uses Qwen2.5-VL (via mlx-vlm) to visually inspect, verify, and correct swimmer bounding box tags.
+Uses SOTA Qwen3-VL / Qwen2.5-VL (via mlx-vlm) to visually inspect, verify, and correct swimmer bounding box tags.
 """
 
 import os
@@ -19,11 +19,14 @@ try:
 except ImportError:
     MLX_VLM_AVAILABLE = False
 
-DEFAULT_VLM_MODEL = "mlx-community/Qwen2.5-VL-7B-Instruct-4bit"
+# Cutting-edge 2026 SOTA default: Qwen3-VL Mixture-of-Experts (Active 3B / 30B Total)
+# Provides 30B visual grounding precision at 3B inference speed
+DEFAULT_VLM_MODEL = "mlx-community/Qwen3-VL-30B-A3B-Instruct-4bit"
+FALLBACK_VLM_MODEL = "mlx-community/Qwen2.5-VL-7B-Instruct-4bit"
 
 class VLMTagVerifier:
     """
-    Uses Qwen2.5-VL on Apple Silicon MLX to visually inspect aerial dataset photos,
+    Uses Qwen3-VL / Qwen2.5-VL on Apple Silicon MLX to visually inspect aerial dataset photos,
     count swimmers, verify existing annotations, and output corrected YOLO bounding boxes.
     """
     def __init__(self, model_path: str = DEFAULT_VLM_MODEL):
@@ -32,13 +35,18 @@ class VLMTagVerifier:
         
         print(f"[VLM Verifier] Loading Apple Silicon MLX Vision Model: {model_path} ...")
         t0 = time.time()
-        self.model, self.processor = load(model_path)
-        self.config = load_config(model_path)
+        try:
+            self.model, self.processor = load(model_path)
+            self.config = load_config(model_path)
+        except Exception as e:
+            print(f"[VLM Verifier] Warning: Could not load {model_path} ({e}). Falling back to {FALLBACK_VLM_MODEL} ...")
+            self.model, self.processor = load(FALLBACK_VLM_MODEL)
+            self.config = load_config(FALLBACK_VLM_MODEL)
         print(f"[VLM Verifier] Loaded VLM successfully in {time.time()-t0:.1f}s")
 
     def detect_swimmers_vlm(self, image_path: str) -> List[Tuple[int, int, int, int]]:
         """
-        Asks Qwen2.5-VL to detect all swimmers in the image and parse its grounding boxes.
+        Asks Qwen3-VL / Qwen2.5-VL to detect all swimmers in the image and parse its grounding boxes.
         Returns a list of [xmin, ymin, xmax, ymax] pixel coordinates.
         """
         img = Image.open(image_path).convert("RGB")
@@ -66,11 +74,10 @@ class VLMTagVerifier:
     @staticmethod
     def _parse_qwen_boxes(text: str, width: int, height: int) -> List[Tuple[int, int, int, int]]:
         """
-        Parses Qwen2.5-VL spatial grounding tags or coordinate tuples.
+        Parses Qwen spatial grounding tags or coordinate tuples.
         Qwen standard coordinates are normalized to [0..1000].
         """
         boxes = []
-        # Pattern matching <|box_start|>(ymin,xmin),(ymax,xmax)<|box_end|> or (ymin,xmin),(ymax,xmax)
         matches = re.findall(r"\((\d+),\s*(\d+)\),\s*\((\d+),\s*(\d+)\)", text)
         for y1, x1, y2, x2 in matches:
             ymin = int(int(y1) / 1000.0 * height)
@@ -112,7 +119,6 @@ class VLMTagVerifier:
             img_cv = cv2.imread(img_path)
             h, w = img_cv.shape[:2]
 
-            # If VLM parsed coordinates successfully, use them; otherwise verify existing label file
             yolo_lines = []
             detections = []
             for i, (xmin, ymin, xmax, ymax) in enumerate(vlm_boxes, 1):
@@ -168,7 +174,7 @@ class VLMTagVerifier:
     </style>
 </head>
 <body>
-    <h1>Qwen2.5-VL Native MLX Tag Verification & Audit Report</h1>
+    <h1>Qwen3-VL Native MLX Tag Verification & Audit Report</h1>
     <div class="subtitle">Verified and corrected bounding box tags using native Vision-Language Grounding</div>
     <div class="grid">
 """)
