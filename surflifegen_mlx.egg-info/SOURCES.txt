@@ -4,9 +4,17 @@ setup.py
 surflifegen/__init__.py
 surflifegen/annotator.py
 surflifegen/cli.py
+surflifegen/dino_annotator.py
+surflifegen/dino_cli.py
 surflifegen/generator.py
+surflifegen/highalt_cli.py
+surflifegen/highalt_pipeline.py
+surflifegen/highway_cli.py
+surflifegen/highway_pipeline.py
+surflifegen/highway_prompt_builder.py
 surflifegen/model_utils.py
 surflifegen/prompt_builder.py
+surflifegen/shark_prompt_builder.py
 surflifegen/verify_cli.py
 surflifegen/vlm_verifier.py
 surflifegen_mlx.egg-info/PKG-INFO

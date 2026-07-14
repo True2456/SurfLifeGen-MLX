@@ -1,3 +1,6 @@
 [console_scripts]
 surflifegen = surflifegen.cli:main
+surflifegen-dino = surflifegen.dino_cli:main
+surflifegen-highalt = surflifegen.highalt_cli:main
+surflifegen-highway = surflifegen.highway_cli:main
 surflifegen-verify = surflifegen.verify_cli:main
