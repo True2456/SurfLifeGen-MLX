@@ -25,7 +25,7 @@ try:
 except ImportError:
     MLX_VLM_AVAILABLE = False
 
-DEFAULT_VLM_MODEL = "mlx-community/Qwen2.5-VL-7B-Instruct-4bit"
+DEFAULT_VLM_MODEL = "mlx-community/Qwen3-VL-8B-Instruct-8bit"
 
 class VLMTagVerifier:
     """
@@ -118,9 +118,12 @@ class VLMTagVerifier:
             prompt = "Look at the object highlighted inside the red bounding box drawn in the center of this ocean patch. Is that highlighted object a human swimmer or person in the water? Answer only YES or NO."
 
         if self.backend == "lmstudio":
-            content, reasoning = self._generate_lmstudio(patch_path, prompt, max_tokens=150, model_id=self.lmstudio_model)
-            full_text = f"{content}\n{reasoning}".upper()
-            return "YES" in full_text and "NO" not in full_text
+            content, reasoning = self._generate_lmstudio(patch_path, prompt, max_tokens=1500, model_id=self.lmstudio_model)
+            if content and content.strip():
+                ans_str = content.strip().upper()
+                return ans_str.startswith("YES") or ("YES" in ans_str and "NO" not in ans_str)
+            tail = reasoning[-300:].upper()
+            return tail.endswith("YES") or tail.endswith("YES.") or ("DECISION: YES" in tail) or (re.search(r'\bYES\b', tail) and not re.search(r'\bNO\b', tail))
 
         messages = [
             {"role": "user", "content": [
@@ -139,7 +142,7 @@ class VLMTagVerifier:
             self.processor,
             image=patch_path,
             prompt=formatted_prompt,
-            max_tokens=12,
+            max_tokens=15,
             temperature=0.0
         )
 
@@ -148,7 +151,7 @@ class VLMTagVerifier:
             output_text = output if isinstance(output, str) else str(output)
 
         ans = output_text.strip().upper()
-        return "YES" in ans and "NO" not in ans
+        return ans.startswith("YES") or ("YES" in ans and "NO" not in ans)
 
     def global_audit_and_recover(self, overview_path: str, verified_count: int, target_type: str = "swimmer") -> Tuple[List[int], str]:
         """
