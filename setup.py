@@ -22,6 +22,7 @@ setup(
             "surflifegen-dino=surflifegen.dino_cli:main",
             "surflifegen-highalt=surflifegen.highalt_cli:main",
             "surflifegen-highway=surflifegen.highway_cli:main",
+            "surflifegen-segment=surflifegen.segment_cli:main",
         ],
     },
     python_requires=">=3.10",

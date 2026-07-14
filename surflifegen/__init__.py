@@ -13,4 +13,5 @@ from .prompt_builder import generate_modular_prompt
 from .shark_prompt_builder import generate_shark_prompt
 from .highway_prompt_builder import generate_highway_prompt
 from .highway_pipeline import HighwayWearPipeline
+from .segmenter import GroundedSamSegmenter
 from .vlm_verifier import VLMTagVerifier

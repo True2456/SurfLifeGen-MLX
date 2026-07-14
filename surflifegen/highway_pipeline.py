@@ -1,8 +1,8 @@
 # surflifegen/highway_pipeline.py
 """
-Highway Defect & Surface Wear Synthetic Generation & Zero-Shot Annotation Pipeline.
-Orchestrates Apple Silicon MLX quantized Cosmos 3 Omni generation and Grounding DINO localization
-for pavement inspection datasets (cracks, potholes, alligatoring, rutting, faded markings).
+Highway Defect & Surface Wear Synthetic Generation & Zero-Shot Annotation/Segmentation Pipeline.
+Orchestrates Apple Silicon MLX quantized Cosmos 3 Omni generation and Grounded-SAM
+for exact polygon masks and colored segmentation overlays of cracks, potholes, and road edges.
 """
 
 import os
@@ -13,22 +13,24 @@ from PIL import Image
 
 from .generator import SurfLifeGenPipeline
 from .dino_annotator import GroundingDinoAnnotator
+from .segmenter import GroundedSamSegmenter
 from .highway_prompt_builder import generate_highway_prompt
 
 
 class HighwayWearPipeline:
     """
-    End-to-end pipeline for generating and annotating highway pavement defects.
+    End-to-end pipeline for generating and segmenting highway pavement defects.
     """
     def __init__(
         self,
         output_dir: str = "./highway_dataset",
         model_path: Optional[str] = None,
         auto_download: bool = True,
-        box_threshold: float = 0.18,
-        text_threshold: float = 0.18,
+        box_threshold: float = 0.22,
+        text_threshold: float = 0.22,
         nms_iou_threshold: float = 0.30,
-        no_annotate: bool = False
+        no_annotate: bool = False,
+        use_sam: bool = True
     ):
         self.output_dir = output_dir
         os.makedirs(self.output_dir, exist_ok=True)
@@ -37,16 +39,31 @@ class HighwayWearPipeline:
         self.generator = SurfLifeGenPipeline(model_path=model_path, auto_download=auto_download)
 
         self.annotator = None
+        self.segmenter = None
+        self.use_sam = use_sam
+
         if not no_annotate:
-            try:
-                print(f"[HighwayWear Generator] Initializing Grounding DINO zero-shot detector...")
-                self.annotator = GroundingDinoAnnotator(
-                    box_threshold=box_threshold,
-                    text_threshold=text_threshold,
-                    nms_iou_threshold=nms_iou_threshold
-                )
-            except Exception as e:
-                print(f"[HighwayWear Generator] Warning: Grounding DINO initialization failed ({e}). Running generation without auto-annotation.")
+            if self.use_sam:
+                try:
+                    print(f"[HighwayWear Generator] Initializing Grounded-SAM (Grounding DINO + Segment Anything) on Apple Silicon MPS...")
+                    self.segmenter = GroundedSamSegmenter(
+                        box_threshold=box_threshold,
+                        text_threshold=text_threshold
+                    )
+                except Exception as e:
+                    print(f"[HighwayWear Generator] Warning: Grounded-SAM initialization failed ({e}). Falling back to box annotator...")
+                    self.use_sam = False
+
+            if not self.use_sam:
+                try:
+                    print(f"[HighwayWear Generator] Initializing Grounding DINO box detector...")
+                    self.annotator = GroundingDinoAnnotator(
+                        box_threshold=box_threshold,
+                        text_threshold=text_threshold,
+                        nms_iou_threshold=nms_iou_threshold
+                    )
+                except Exception as e:
+                    print(f"[HighwayWear Generator] Warning: Grounding DINO initialization failed ({e}). Running without auto-annotation.")
 
     def generate_scene(
         self,
@@ -62,7 +79,7 @@ class HighwayWearPipeline:
     ) -> Tuple[str, str, Dict[str, Any]]:
         """
         Synthesizes a single highway defect image, saves it with strict anti-overwrite guarantees,
-        and runs Grounding DINO zero-shot annotation.
+        and runs Grounded-SAM segmentation or box annotation.
         Returns (clean_image_path, annotated_image_path, metadata).
         """
         t0 = time.time()
@@ -86,22 +103,30 @@ class HighwayWearPipeline:
         counter = 1
         clean_filename = f"{filename_prefix}_{config['defect_type']}_{counter:04d}.png"
         clean_path = os.path.join(self.output_dir, clean_filename)
-        annotated_path = clean_path.replace(".png", "_dino.png")
+        annotated_path = clean_path.replace(".png", "_segmented.png" if self.use_sam else "_dino.png")
 
         while os.path.exists(clean_path) or os.path.exists(annotated_path):
             counter += 1
             clean_filename = f"{filename_prefix}_{config['defect_type']}_{counter:04d}.png"
             clean_path = os.path.join(self.output_dir, clean_filename)
-            annotated_path = clean_path.replace(".png", "_dino.png")
+            annotated_path = clean_path.replace(".png", "_segmented.png" if self.use_sam else "_dino.png")
 
         image.save(clean_path)
         elapsed_gen = round(time.time() - t0, 2)
         print(f"  -> Saved clean image: {clean_filename} ({elapsed_gen}s)")
 
         detections = []
-        summary = "Grounding DINO skipped."
-        if self.annotator:
-            print(f"  -> Running Grounding DINO localization (Query: '{dino_query}')...")
+        summary = "Annotation skipped."
+        if self.segmenter:
+            print(f"  -> Running Grounded-SAM polygon mask segmentation (Query: '{dino_query}')...")
+            detections, summary = self.segmenter.segment_image(
+                clean_path,
+                output_dir=self.output_dir,
+                detection_prompt=dino_query
+            )
+            print(f"  -> {summary}")
+        elif self.annotator:
+            print(f"  -> Running Grounding DINO box localization (Query: '{dino_query}')...")
             detections, summary = self.annotator.annotate_image(
                 clean_path,
                 output_path=annotated_path,
@@ -112,7 +137,7 @@ class HighwayWearPipeline:
 
         metadata = {
             "clean_file": os.path.basename(clean_path),
-            "annotated_file": os.path.basename(annotated_path) if self.annotator else None,
+            "annotated_file": os.path.basename(annotated_path) if (self.segmenter or self.annotator) else None,
             "defect_type": config["defect_type"],
             "asphalt": config["asphalt"],
             "perspective": config["perspective"],
@@ -123,8 +148,8 @@ class HighwayWearPipeline:
             "summary": summary
         }
 
-        # Append to bounding_boxes.json
-        json_path = os.path.join(self.output_dir, "bounding_boxes.json")
+        # Append to bounding_boxes.json / segmentations.json
+        json_path = os.path.join(self.output_dir, "segmentations.json" if self.use_sam else "bounding_boxes.json")
         existing_data = []
         if os.path.exists(json_path):
             try:

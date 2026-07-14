@@ -40,11 +40,12 @@ cd SurfLifeGen-MLX
 pip install -e .
 ```
 
-This installs four global command-line tools into your environment:
+This installs five global command-line tools into your environment:
 1. `surflifegen`: Main Cosmos 3 MLX dataset generator with Grounding DINO annotation (`--target swimmer` | `--target shark`).
 2. `surflifegen-highalt`: Specialized high-altitude (`100m-400m`) active swimmer scene synthesizer.
-3. `surflifegen-highway`: Dedicated highway pavement defect, road crack, pothole, and asphalt wear dataset generator.
-4. `surflifegen-verify`: Apple Silicon MLX Qwen3-VL automated bounding box audit & correction tool.
+3. `surflifegen-highway`: Dedicated highway pavement defect generator with **Grounded-SAM** precision polygon mask segmentation.
+4. `surflifegen-segment`: Standalone Grounded-SAM (`Grounding DINO + Segment Anything`) zero-shot polygon mask segmenter for any existing road/defect dataset.
+5. `surflifegen-verify`: Apple Silicon MLX Qwen3-VL automated bounding box audit & correction tool.
 
 ---
 
@@ -186,8 +187,19 @@ surflifegen-highalt \
 | `--perspective` | | `random` | Camera inspection view: `nadir_drone`, `low_nadir`, `vehicle_surface`, `random` |
 | `--count` | `-c` | `5` | Number of highway defect scenes to generate |
 | `--bulk-count` | `-n` | `None` | Alias for `--count` when running automated generation loops |
-| `--box-threshold` | `--box-thresh` | `0.18` | Grounding DINO detection box confidence threshold |
-| `--detection-prompt` | `-d` | `None` | Custom dot-separated queries for Grounding DINO (`'pothole . crack .'`) |
+| `--box-threshold` | `--box-thresh` | `0.22` | Grounded-SAM / Grounding DINO localization confidence threshold |
+| `--detection-prompt` | `-d` | `None` | Custom dot-separated queries (`'crack in asphalt . pothole . road edge .'`) |
+| `--boxes-only` | `--no-sam` | `False` | Use coarse Grounding DINO rectangular bounding boxes instead of SAM precision polygon masks |
+| `--no-annotate` | | `False` | Skip auto-annotation/segmentation pass |
+
+### `surflifegen-segment` Options (Grounded-SAM Standalone Segmenter):
+
+| Flag | Shortcut | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `--dataset-dir` | `-d` | Required | Path to directory containing road/defect images to segment |
+| `--prompt` | `-p` | `'crack in asphalt . pothole . road edge .'` | Dot-separated localization queries before SAM mask generation |
+| `--box-threshold` | `--box-thresh` | `0.22` | Detection confidence threshold before mask creation |
+| `--sam-model-id` | | `'facebook/sam-vit-base'` | HuggingFace model ID for Segment Anything (running natively on Apple Silicon MPS) |
 
 ---
 

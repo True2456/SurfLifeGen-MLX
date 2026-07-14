@@ -67,6 +67,8 @@ class GroundingDinoAnnotator:
             text = detection_prompt
         elif target_type == "shark":
             text = "submerged shark . shark in water . marine predator silhouette ."
+        elif target_type == "defect":
+            text = "crack in asphalt . road crack . pothole . pavement defect . road edge ."
         else:
             text = "swimmer . person floating in water . person in ocean ."
 
@@ -136,7 +138,13 @@ class GroundingDinoAnnotator:
             x1, y1, x2, y2 = det["box"]
             score = det["score"]
             cv2.rectangle(img_bgr, (x1, y1), (x2, y2), (0, 255, 0), 3)
-            label_text = f"#{i} Swimmer ({score:.2f})" if target_type == "swimmer" else f"#{i} Shark ({score:.2f})"
+            if target_type == "swimmer":
+                label_text = f"#{i} Swimmer ({score:.2f})"
+            elif target_type == "shark":
+                label_text = f"#{i} Shark ({score:.2f})"
+            else:
+                raw_label = det.get("label", target_type.title()) if isinstance(det.get("label"), str) else target_type.title()
+                label_text = f"#{i} {raw_label.strip().title()} ({score:.2f})"
             cv2.putText(
                 img_bgr,
                 label_text,
@@ -157,12 +165,16 @@ class GroundingDinoAnnotator:
 
     def annotate_dataset(self, dataset_dir: str, target_type: str = "swimmer", detection_prompt: str = None):
         """
-        Batch annotates all PNG files in a dataset directory.
+        Batch annotates all PNG/JPG/JPEG/WEBP files in a dataset directory.
         """
-        png_files = sorted(glob.glob(os.path.join(dataset_dir, "*.png")))
+        all_files = []
+        for ext in ("*.png", "*.jpg", "*.jpeg", "*.webp", "*.PNG", "*.JPG", "*.JPEG", "*.WEBP"):
+            all_files.extend(glob.glob(os.path.join(dataset_dir, ext)))
+        all_files = sorted(list(set(all_files)))
+
         # Filter out already annotated images or temp files
         valid_files = [
-            f for f in png_files
+            f for f in all_files
             if not os.path.basename(f).startswith("_")
             and "_annotated" not in f
             and "_dino" not in f

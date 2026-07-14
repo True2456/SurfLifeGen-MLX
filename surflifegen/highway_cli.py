@@ -100,7 +100,12 @@ def main():
     parser.add_argument(
         "--no-annotate",
         action="store_true",
-        help="Skip Grounding DINO auto-annotation pass"
+        help="Skip auto-annotation/segmentation pass"
+    )
+    parser.add_argument(
+        "--boxes-only", "--no-sam",
+        action="store_true",
+        help="Use coarse Grounding DINO rectangular bounding boxes instead of SAM precision polygon masks"
     )
 
     args = parser.parse_args()
@@ -112,7 +117,8 @@ def main():
         box_threshold=args.box_threshold,
         text_threshold=args.text_threshold,
         nms_iou_threshold=args.nms_threshold,
-        no_annotate=args.no_annotate
+        no_annotate=args.no_annotate,
+        use_sam=not args.boxes_only
     )
 
     print(f"[HighwayWear Generator] Starting batch synthesis of {total_count} highway defect & surface wear scenes...")
