@@ -19,7 +19,7 @@ class PrecisionSwimmerAnnotator:
         os.makedirs(self.previews_dir, exist_ok=True)
 
     @staticmethod
-    def detect_targets(img_bgr: np.ndarray, target_type: str = "swimmer", target_count: int = None, min_score: float = 60.0) -> List[Tuple[int, int, int, int]]:
+    def detect_targets(img_bgr: np.ndarray, target_type: str = "swimmer", target_count: int = None, min_score: float = 12.0) -> List[Tuple[int, int, int, int]]:
         """
         Programmatically detects swimmers or submerged sharks using exact morphological features.
         Removes noisy chroma masking and border artifacts to isolate true physical targets.
@@ -42,18 +42,19 @@ class PrecisionSwimmerAnnotator:
             
             kernel_clean = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9))
             closed = cv2.morphologyEx(saliency, cv2.MORPH_CLOSE, kernel_clean)
+            mask_warm = np.zeros((h, w), dtype=np.uint8)
         else:
             # Swimmers: warm lifeguard attire OR dark wetsuits/shadows against water
-            mask_warm1 = cv2.inRange(hsv, np.array([0, 60, 60]), np.array([32, 255, 255]))
-            mask_warm2 = cv2.inRange(hsv, np.array([158, 60, 60]), np.array([180, 255, 255]))
+            mask_warm1 = cv2.inRange(hsv, np.array([0, 55, 55]), np.array([32, 255, 255]))
+            mask_warm2 = cv2.inRange(hsv, np.array([158, 55, 55]), np.array([180, 255, 255]))
             mask_warm = cv2.bitwise_or(mask_warm1, mask_warm2)
 
             blur = cv2.GaussianBlur(gray, (7, 7), 0)
             kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (25, 25))
             tophat = cv2.morphologyEx(blur, cv2.MORPH_TOPHAT, kernel)
             blackhat = cv2.morphologyEx(blur, cv2.MORPH_BLACKHAT, kernel)
-            _, mask_th = cv2.threshold(tophat, 30, 255, cv2.THRESH_BINARY)
-            _, mask_bh = cv2.threshold(blackhat, 30, 255, cv2.THRESH_BINARY)
+            _, mask_th = cv2.threshold(tophat, 24, 255, cv2.THRESH_BINARY)
+            _, mask_bh = cv2.threshold(blackhat, 24, 255, cv2.THRESH_BINARY)
 
             # Combined without chroma noise
             saliency = cv2.bitwise_or(mask_warm, cv2.bitwise_or(mask_th, mask_bh))
@@ -75,29 +76,28 @@ class PrecisionSwimmerAnnotator:
         candidates = []
         for cnt in contours:
             area = cv2.contourArea(cnt)
-            min_area = 130 if target_type == "shark" else 75
-            max_area = 15000 if target_type == "shark" else 8500
+            min_area = 110 if target_type == "shark" else 35
+            max_area = 15000 if target_type == "shark" else 10000
 
             if min_area <= area <= max_area:
                 x, y, bw, bh = cv2.boundingRect(cnt)
                 aspect = max(bw, bh) / max(1.0, min(bw, bh))
-                max_aspect = 4.0 if target_type == "shark" else 2.6
+                max_aspect = 4.0 if target_type == "shark" else 2.8
 
                 if aspect <= max_aspect:
                     solidity = area / float(max(1, bw * bh))
                     roi_sal = closed[y:y+bh, x:x+bw]
                     sal_density = np.sum(roi_sal > 0) / float(max(1, bw * bh))
 
+                    roi_warm = mask_warm[y:y+bh, x:x+bw]
+                    warm_density = np.sum(roi_warm > 0) / float(max(1, bw * bh))
+
                     # Multi-factor score favoring dense, solid objects over thin wave ripples
-                    score = (area ** 0.5) * solidity * sal_density * 10.0
-                    if target_type == "swimmer":
-                        roi_warm = mask_warm[y:y+bh, x:x+bw] if 'mask_warm' in locals() else np.zeros((bh, bw))
-                        warm_density = np.sum(roi_warm > 0) / float(max(1, bw * bh))
-                        score += warm_density * 150.0
+                    score = (sal_density * 90.0) + (warm_density * 280.0) + (solidity * 75.0)
 
                     if score >= min_score:
-                        pad_x = int(bw * 0.18)
-                        pad_y = int(bh * 0.18)
+                        pad_x = max(4, int(bw * 0.15))
+                        pad_y = max(4, int(bh * 0.15))
                         xmin = max(0, x - pad_x)
                         ymin = max(0, y - pad_y)
                         xmax = min(w - 1, x + bw + pad_x)
@@ -137,7 +137,7 @@ class PrecisionSwimmerAnnotator:
         img = cv2.imread(image_path)
         h, w = img.shape[:2]
 
-        boxes = self.detect_targets(img, target_type=target_type, target_count=target_count)
+        boxes = self.detect_targets(img, target_type=target_type, target_count=target_count, min_score=20.0)
 
         yolo_lines = []
         preview_img = img.copy()
