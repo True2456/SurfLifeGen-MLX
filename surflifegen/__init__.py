@@ -16,5 +16,6 @@ from .highway_pipeline import HighwayWearPipeline
 from .segmenter import GroundedSamSegmenter
 from .urban_segmenter import UrbanSceneSegmenter
 from .urban_live import UrbanLiveVideoPlayer
+from .train_urban_yolo import UrbanYoloAutoTrainer
 from .yolo_exporter import YoloDatasetExporter
 from .vlm_verifier import VLMTagVerifier

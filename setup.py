@@ -25,6 +25,7 @@ setup(
             "surflifegen-segment=surflifegen.segment_cli:main",
             "surflifegen-urban=surflifegen.urban_cli:main",
             "surflifegen-urban-live=surflifegen.urban_live_cli:main",
+            "surflifegen-train-yolo=surflifegen.train_urban_yolo:main",
             "surflifegen-yolo-export=surflifegen.yolo_cli:main",
         ],
     },
