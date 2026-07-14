@@ -11,12 +11,12 @@ SurfLifeGen-MLX is a state-of-the-art synthetic data generation and automated an
 ### ✨ New Upgrades & Capabilities
 
 - **Option A Grounding DINO Zero-Shot Auto-Annotation:** Replaced fragile color heuristics with open-vocabulary `Grounding DINO` (`IDEA-Research/grounding-dino-base`) running natively on PyTorch `MPS`. Automatically outputs both exact YOLO annotations (`bounding_boxes.json`) and visual debug frames (`_annotated.png` / `_dino.png`) for every generated image.
-- **Strict Zero-Overwrite Guarantee:** All generation modes automatically scan your output directory (`./custom_highalt_swimmers`), identify existing filenames (`_0001.png`, `_0002.png`), and dynamically increment counters right before saving so no dataset file or annotation is ever accidentally overwritten.
+- **Strict Zero-Overwrite Guarantee:** All generation modes automatically scan your output directory (`./custom_highalt_swimmers`, `./High_Alt_Shark`), identify existing filenames (`_0001.png`, `_0002.png`), and dynamically increment counters right before saving so no dataset file or annotation is ever accidentally overwritten.
 - **Upgraded Active Swimming & Anatomical Defaults:** Default swimming prompts (`--target swimmer`) are weighted toward **100 meters nadir altitude** with strict anatomical and submersion safety rules injected into every scene: *"Each swimmer is partially submerged. Make sure humans have no extra limbs."*
 - **High-Altitude Active Swimmer Simulation (`surflifegen-highalt`):** Dedicated CLI and physics scaling engine for simulating dynamic swimming kinematics (`freestyle with arm splashing`, `breaststroke kicks`, `treading water`, `water ripples`) scaled to exact field-of-view trigonometric pixel ratios for `100m–400m` altitudes.
-- **Custom Prompt + Bulk Generation (`--bulk-count X --prompt "..."`):** Seamlessly pass custom target prompts into bulk mode to generate 50+ variations of your exact prompt while automatically auto-annotating and incrementing filenames.
-- **Custom Grounding DINO Queries (`--detection-prompt` / `-d`):** Full open-vocabulary control allowing you to specify custom dot-separated detection targets on the fly (e.g., `'swimmer . person splashing . lifeguard vest .'`).
-- **Adjustable Detection Sensitivity:** Fine-tune confidence thresholds (`--box-thresh`, `--text-thresh`, `--nms-thresh`) right from the command line to reliably localize faint, tiny, or deeply submerged swimmers.
+- **Custom Prompt + Bulk Generation (`--bulk-count X --prompt "..."`):** Seamlessly pass custom target prompts into bulk mode to generate 50+ variations of your exact prompt while automatically auto-annotating and incrementing filenames across both Swimmer and Shark modes.
+- **Custom Grounding DINO Queries (`--detection-prompt` / `-d`):** Full open-vocabulary control allowing you to specify custom dot-separated detection targets on the fly (`'submerged shark . shark in water . marine predator silhouette .'`).
+- **Adjustable Detection Sensitivity:** Fine-tune confidence thresholds (`--box-thresh`, `--text-thresh`, `--nms-thresh`) right from the command line to reliably localize faint, tiny, or deeply submerged targets.
 
 ---
 
@@ -47,14 +47,37 @@ This installs three global command-line tools into your environment:
 
 ---
 
-## Command-Line Usage
+## Command-Line Usage & Recipes
 
-### 1. Custom Prompt Bulk Generation with High-Sensitivity DINO Detection
+### 1. Custom Prompt Submerged Shark Generation (`--target shark` + `--detection-prompt`)
+
+Generate custom high-altitude aerial patrol photographs of submerged marine predators using your exact custom prompt (`--prompt`), while explicitly setting `--target shark` and passing a matching Grounding DINO open-vocabulary query (`--detection-prompt`):
+
+```bash
+surflifegen \
+  --target shark \
+  --prompt "Direct overhead flying nadir photograph looking straight down from high altitude showing 1-3 submerged sharks cruising underwater beneath coastal ocean water. Distinct shark silhouette visible below the waters surface. Water clarity should be random. Random Time of day but not night time" \
+  --steps 40 \
+  --bulk-count 1 \
+  --box-thresh 0.16 \
+  --nms-thresh 0.30 \
+  --detection-prompt "submerged shark . shark in water . marine predator silhouette ." \
+  --output-dir ./High_Alt_Shark
+```
+
+> [!IMPORTANT]
+> **Why `--target` and `--detection-prompt` must match:**
+> If you pass a custom `--prompt` describing sharks, you MUST also specify `--target shark` (otherwise `surflifegen` defaults to `--target swimmer`). Furthermore, your `--detection-prompt` must query for sharks (`"submerged shark . marine predator silhouette ."`). If `--target swimmer` or a swimmer detection query is used on a shark photograph, Grounding DINO will search the shark photo for human swimmers and return `0 detections`.
+
+---
+
+### 2. Custom Prompt Swimmer Generation (`--target swimmer` + `--detection-prompt`)
 
 Generate `50` custom active swimming scenes at `100m` altitude using an exact prompt, while tuning Grounding DINO to detect faint submerged swimmers and custom concepts (`swimmer`, `person splashing`, `lifeguard vest`):
 
 ```bash
 surflifegen \
+  --target swimmer \
   --prompt "Direct overhead nadir photograph from 100 meters altitude above sea level showing multiple human swimmers actively swimming or splashing across coastal ocean water. Each swimmer is partially submerged. Make sure humans have no extra limbs. Clean distinct human silhouettes visible against coastal ocean swell and seafoam, high optical resolution aerial photography" \
   --steps 25 \
   --bulk-count 50 \
@@ -64,23 +87,35 @@ surflifegen \
   --output-dir ./custom_highalt_swimmers
 ```
 
-### 2. Bulk Swimmer Dataset Generation (Default Modular Engine)
+---
 
-Generate `100` randomized active swimmer scenes (freestyle, breaststroke, splashing, rip currents) using the upgraded modular prompt engine (defaulting around `100m` altitude and strict anatomical rules):
+### 3. Fully Automated Randomized Dataset Generation (Omitting `--prompt`)
 
+When you omit `--prompt` and simply specify `--bulk-count X`, `surflifegen` activates its **Modular Randomized Prompt Engine**. Before generating each individual image, Python dynamically constructs a unique, concrete scene with randomized quantities:
+- **Randomized Target Counts:** e.g., 1, 2, 3, or 4 sharks/swimmers per shot.
+- **Randomized Altitudes:** e.g., 60m, 80m, 100m, or 120m above sea level.
+- **Randomized Lighting & Time of Day:** e.g., midday bright sun, morning golden light, afternoon glare.
+- **Randomized Water Clarity:** e.g., crystal clear turquoise, slight coastal turbidity, deep oceanic blue.
+
+#### Bulk Randomized Swimmer Dataset:
 ```bash
 surflifegen --target swimmer --bulk-count 100 --output-dir ./bulk_swimmer_dataset --steps 25
 ```
 
-### 3. Bulk Submerged Shark Patrol Dataset (`--target shark`)
-
-Generate synthetic aerial patrol photographs of submerged marine predators cruising `1–3m` below turquoise water over sandy sea floors or drop-offs:
-
+#### Bulk Randomized Submerged Shark Dataset:
 ```bash
 surflifegen --target shark --bulk-count 50 --output-dir ./shark_aerial_dataset --steps 25
 ```
 
-### 4. High-Altitude Active Swimmer Synthesis (`surflifegen-highalt`)
+> [!TIP]
+> **Prompt Wording vs. Automatic Randomization:**
+> Text-to-image AI vision models (like Cosmos 3) do not have a built-in random number generator. If you type meta-instructions like `"Water clarity should be random. Random Time of day"` into `--prompt`, the neural network literally tries to visually paint what abstract words look like—which can lead to weird fog or text artifacts.
+> - **If using `--prompt`:** Provide exact, concrete visual descriptions (`"two submerged sharks beneath clear turquoise water under midday sun"`).
+> - **If you want randomization across dozens of images:** Omit `--prompt` and let `surflifegen --bulk-count X` automatically generate distinct, concrete prompt variations for each frame!
+
+---
+
+### 4. High-Altitude Active Swimmer Simulation (`surflifegen-highalt`)
 
 Simulate high-altitude aerial drone passes (`100m–400m`) with exact trigonometric swimmer pixel scaling, active arm/leg stroke sprites, and automatic zero-shot Grounding DINO localization:
 
@@ -107,10 +142,10 @@ surflifegen-highalt \
 | `--steps` | `-s` | `25` | Number of MLX inference steps per image |
 | `--prompt` | `-p` | `None` | Custom text prompt for generation (overrides modular template) |
 | `--bulk-count` | `-n` | `None` | Generate `X` images automatically. Works with or without `--prompt` |
-| `--box-threshold` | `--box-thresh` | `0.22` | Grounding DINO box confidence threshold (lower = more sensitive) |
+| `--box-threshold` | `--box-thresh` | `0.22` | Grounding DINO box confidence threshold (lower = more sensitive, e.g. `0.16`) |
 | `--text-threshold` | `--text-thresh` | `0.22` | Grounding DINO text prompt matching threshold |
 | `--nms-threshold` | `--iou-thresh` | `0.30` | Non-Maximum Suppression (NMS) IoU threshold for overlapping boxes |
-| `--detection-prompt` | `-d` | `None` | Custom dot-separated queries for Grounding DINO (e.g. `'swimmer . splash .'`) |
+| `--detection-prompt` | `-d` | `None` | Custom dot-separated queries for Grounding DINO (e.g. `'submerged shark . shark in water .'`) |
 | `--no-annotate` | | `False` | Skip Grounding DINO auto-annotation pass |
 
 ---
@@ -130,20 +165,20 @@ annotator = GroundingDinoAnnotator(
     nms_iou_threshold=0.30
 )
 
-# 2. Generate a 100m Active Swimming Scene
-config = generate_modular_prompt()
+# 2. Generate a Submerged Shark Scene
+config = generate_modular_prompt(target_type="shark")
 print("Generated Prompt:", config["prompt"])
 
-image = pipeline.generate(prompt=config["prompt"], width=1024, height=768, steps=25)
-image_path = "./output/swimmer_scene.png"
+image = pipeline.generate(prompt=config["prompt"], width=1024, height=768, steps=40)
+image_path = "./output/shark_scene.png"
 image.save(image_path)
 
 # 3. Zero-Shot Open-Vocabulary Localization
 detections, summary = annotator.annotate_image(
     image_path,
-    output_path="./output/swimmer_scene_annotated.png",
-    target_type="swimmer",
-    detection_prompt="swimmer . person splashing . human silhouette ."
+    output_path="./output/shark_scene_annotated.png",
+    target_type="shark",
+    detection_prompt="submerged shark . shark in water . marine predator silhouette ."
 )
 print("Annotation Summary:", summary)
 print("Boxes ([x1, y1, x2, y2]):", [d["box"] for d in detections])
