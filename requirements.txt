@@ -1,0 +1,9 @@
+mlx>=0.22.0
+torch>=2.0.0
+diffusers>=0.32.0
+transformers>=4.45.0
+accelerate>=0.28.0
+opencv-python>=4.8.0
+numpy>=1.24.0
+pillow>=10.0.0
+huggingface_hub>=0.24.0
