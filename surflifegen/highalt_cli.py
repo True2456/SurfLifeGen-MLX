@@ -34,19 +34,43 @@ def main():
         default=3,
         help="Number of active swimmers per scene (default: 3)"
     )
+    parser.add_argument("--box-threshold", "--box-thresh", type=float, default=0.18, help="Detection sensitivity box threshold for Grounding DINO (lower = more sensitive, default: 0.18)")
+    parser.add_argument("--text-threshold", "--text-thresh", type=float, default=0.18, help="Detection sensitivity text prompt threshold for Grounding DINO (default: 0.18)")
+    parser.add_argument("--nms-threshold", "--iou-threshold", type=float, default=0.30, help="NMS IoU threshold for overlapping box removal (default: 0.30)")
 
     args = parser.parse_args()
 
-    pipeline = HighAltitudeSwimmerPipeline(output_dir=args.output_dir)
-    print(f"[HighAlt Generator] Starting generation of {args.count} high-altitude (`alt{args.altitude}m`) active swimmer scenes...")
+    pipeline = HighAltitudeSwimmerPipeline(
+        output_dir=args.output_dir,
+        box_threshold=args.box_threshold,
+        text_threshold=args.text_threshold,
+        nms_iou_threshold=args.nms_threshold
+    )
+    print(f"[HighAlt Generator] Starting generation of {args.count} high-altitude (`alt{args.altitude}m`) active swimmer scenes (BoxThresh={args.box_threshold}, TextThresh={args.text_threshold}, NMS={args.nms_threshold})...")
 
-    for i in range(1, args.count + 1):
+    # Strict anti-overwrite guarantee: find next starting index
+    import glob, re
+    pattern = os.path.join(args.output_dir, "highalt_*.png")
+    files = glob.glob(pattern)
+    start_idx = 1
+    for fp in files:
+        base = os.path.basename(fp)
+        match = re.search(r"highalt_(\d+)", base)
+        if match:
+            try:
+                idx = int(match.group(1))
+                if idx >= start_idx:
+                    start_idx = idx + 1
+            except ValueError:
+                pass
+
+    for i in range(start_idx, start_idx + args.count):
         clean_p, ann_p, meta = pipeline.generate_highalt_scene(
             altitude_m=args.altitude,
             swimmer_count=args.swimmers,
             filename_prefix=f"highalt_{i:04d}"
         )
-        print(f"[{i}/{args.count}] Generated {os.path.basename(clean_p)} -> {meta.get('dino_summary')}")
+        print(f"[{i - start_idx + 1}/{args.count}] Generated {os.path.basename(clean_p)} -> {meta.get('dino_summary')}")
 
     print(f"\n[HighAlt Generator] Completed! Dataset saved to: {args.output_dir}")
 

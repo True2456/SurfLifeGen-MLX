@@ -27,7 +27,10 @@ class HighAltitudeSwimmerPipeline:
         self,
         output_dir: str = "./highalt_swimmer_dataset",
         dino_model_id: str = "IDEA-Research/grounding-dino-base",
-        device: str = None
+        device: str = None,
+        box_threshold: float = 0.18,
+        text_threshold: float = 0.18,
+        nms_iou_threshold: float = 0.30
     ):
         self.output_dir = output_dir
         os.makedirs(self.output_dir, exist_ok=True)
@@ -38,9 +41,9 @@ class HighAltitudeSwimmerPipeline:
                 self.annotator = GroundingDinoAnnotator(
                     model_id=dino_model_id,
                     device=device,
-                    box_threshold=0.18,  # Lower threshold for tiny high-altitude dots
-                    text_threshold=0.18,
-                    nms_iou_threshold=0.30
+                    box_threshold=box_threshold,
+                    text_threshold=text_threshold,
+                    nms_iou_threshold=nms_iou_threshold
                 )
             except Exception as e:
                 print(f"[HighAlt Pipeline] Warning: Could not initialize Grounding DINO: {e}")
@@ -227,12 +230,19 @@ class HighAltitudeSwimmerPipeline:
                 gy2 = y1 + int(np.max(y_indices))
                 ground_truth_boxes.append([gx1, gy1, gx2, gy2])
 
-        clean_path = os.path.join(self.output_dir, f"{filename_prefix}_alt{altitude_m}m.png")
+        clean_filename = f"{filename_prefix}_alt{altitude_m}m.png"
+        clean_path = os.path.join(self.output_dir, clean_filename)
+        counter = 1
+        while os.path.exists(clean_path) or os.path.exists(clean_path.replace(".png", "_dino.png")):
+            clean_filename = f"{filename_prefix}_{counter:04d}_alt{altitude_m}m.png"
+            clean_path = os.path.join(self.output_dir, clean_filename)
+            counter += 1
+
         cv2.imwrite(clean_path, bg)
 
         # Run Grounding DINO zero-shot auto-annotation on the new high-altitude image
         dino_detections = []
-        annotated_path = os.path.join(self.output_dir, f"{filename_prefix}_alt{altitude_m}m_dino.png")
+        annotated_path = clean_path.replace(".png", "_dino.png")
         if self.annotator:
             dino_detections, summary = self.annotator.annotate_image(clean_path, output_path=annotated_path, target_type="swimmer")
         else:
@@ -250,7 +260,7 @@ class HighAltitudeSwimmerPipeline:
             "dino_summary": summary
         }
 
-        meta_path = os.path.join(self.output_dir, f"{filename_prefix}_alt{altitude_m}m.json")
+        meta_path = clean_path.replace(".png", ".json")
         with open(meta_path, "w") as f:
             json.dump(metadata, f, indent=2)
 

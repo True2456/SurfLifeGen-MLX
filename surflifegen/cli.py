@@ -27,11 +27,14 @@ def get_next_start_index(output_dir: str, prefix: str = "bulk_") -> int:
     max_idx = 0
     for fp in files:
         base = os.path.basename(fp)
-        match = re.search(r"_(\d{4})_", base)
+        match = re.search(r"_(\d+)", base) or re.search(r"(\d+)", base)
         if match:
-            idx = int(match.group(1))
-            if idx > max_idx:
-                max_idx = idx
+            try:
+                idx = int(match.group(1))
+                if idx > max_idx:
+                    max_idx = idx
+            except ValueError:
+                pass
     return max_idx + 1
 
 def main():
@@ -47,6 +50,9 @@ def main():
     parser.add_argument("--count", "-c", type=int, default=100, help="Max target count for custom prompt annotation")
     parser.add_argument("--bulk-count", "-n", type=int, default=None, help="Generate X amount of images using modular randomized prompt builder")
     parser.add_argument("--no-annotate", action="store_true", help="Skip automatic YOLO bounding box annotation")
+    parser.add_argument("--box-threshold", "--box-thresh", type=float, default=0.22, help="Detection sensitivity box threshold for Grounding DINO (lower = more sensitive, default: 0.22)")
+    parser.add_argument("--text-threshold", "--text-thresh", type=float, default=0.22, help="Detection sensitivity text prompt threshold for Grounding DINO (default: 0.22)")
+    parser.add_argument("--nms-threshold", "--iou-threshold", type=float, default=0.30, help="NMS IoU threshold for overlapping box removal (default: 0.30)")
 
     args = parser.parse_args()
 
@@ -56,8 +62,8 @@ def main():
     annotator = None
     if not args.no_annotate and DINO_AVAILABLE:
         try:
-            print("\n[SurfLifeGen-MLX] Initializing Option A: Grounding DINO Zero-Shot Auto-Annotator...")
-            annotator = GroundingDinoAnnotator(box_threshold=0.22, text_threshold=0.22, nms_iou_threshold=0.30)
+            print(f"\n[SurfLifeGen-MLX] Initializing Option A: Grounding DINO Zero-Shot Auto-Annotator (BoxThresh={args.box_threshold}, TextThresh={args.text_threshold}, NMS={args.nms_threshold})...")
+            annotator = GroundingDinoAnnotator(box_threshold=args.box_threshold, text_threshold=args.text_threshold, nms_iou_threshold=args.nms_threshold)
         except Exception as e:
             print(f"[SurfLifeGen-MLX] Warning: Grounding DINO could not be initialized: {e}")
 
@@ -97,15 +103,35 @@ def main():
             target_cnt = mod.get("shark_count", mod.get("swimmer_count", 100))
             prompts.append((filename, prompt_text, target_cnt, mod))
     elif args.prompt:
-        prompts = [("custom_generation.png", args.prompt, args.count, None)]
+        idx = get_next_start_index(args.output_dir, prefix="custom_")
+        prompts = [(f"custom_{idx:04d}.png", args.prompt, args.count, None)]
     else:
-        prompts = [(fn, txt, c, None) for fn, txt, c in DEFAULT_PROMPTS]
+        prompts = []
+        for fn, txt, c in DEFAULT_PROMPTS:
+            base_prefix = fn.split(".")[0] + "_"
+            idx = get_next_start_index(args.output_dir, prefix=base_prefix)
+            prompts.append((f"{base_prefix}{idx:04d}.png", txt, c, None))
 
     for i, (filename, text, count, mod_meta) in enumerate(prompts, 1):
         print(f"\n[{i}/{len(prompts)}] Generating {filename} ({args.target.upper()})...")
         t0 = time.time()
         img = pipe.generate(prompt=text, steps=args.steps)
         out_path = os.path.join(args.output_dir, filename)
+        
+        # Strict anti-overwrite guarantee: increment counter if file exists
+        counter = 1
+        while os.path.exists(out_path) or os.path.exists(out_path.replace(".png", "_annotated.png")):
+            base, ext = os.path.splitext(filename)
+            match = re.search(r"_(\d+)$", base)
+            if match:
+                new_num = int(match.group(1)) + 1
+                base = re.sub(r"_(\d+)$", f"_{new_num:04d}", base)
+            else:
+                base = f"{base}_{counter:04d}"
+            filename = f"{base}{ext}"
+            out_path = os.path.join(args.output_dir, filename)
+            counter += 1
+
         img.save(out_path)
         elapsed = round(time.time() - t0, 2)
         print(f"  -> Saved {out_path} ({elapsed}s)")
