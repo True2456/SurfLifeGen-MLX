@@ -150,7 +150,11 @@ class UrbanSceneSegmenter:
         image_path: str,
         output_dir: Optional[str] = None,
         box_threshold: Optional[float] = None,
-        text_threshold: Optional[float] = None
+        text_threshold: Optional[float] = None,
+        save_overlay: bool = True,
+        save_mask: bool = True,
+        max_size: Optional[int] = None,
+        **kwargs
     ) -> Tuple[List[Dict[str, Any]], str]:
         """
         Segments a single image into categorical multi-class layers (`_urban_mask.png`), color overlay (`_urban_segmented.png`),
@@ -163,8 +167,18 @@ class UrbanSceneSegmenter:
             raise FileNotFoundError(f"Image not found at {image_path}")
 
         img_pil = Image.open(image_path).convert("RGB")
-        w, h = img_pil.size
+        orig_w, orig_h = img_pil.size
+
+        scale = 1.0
+        if max_size is not None and max_size > 0 and max(orig_w, orig_h) > max_size:
+            scale = float(max_size) / max(orig_w, orig_h)
+            proc_w, proc_h = int(orig_w * scale), int(orig_h * scale)
+            img_pil = img_pil.resize((proc_w, proc_h), Image.Resampling.BILINEAR)
+        else:
+            proc_w, proc_h = orig_w, orig_h
+
         img_np = np.array(img_pil)
+        w, h = proc_w, proc_h
 
         # Construct Grounding DINO dot-separated query prompt
         detection_prompt = " . ".join(self.classes) + " ."
@@ -297,12 +311,17 @@ class UrbanSceneSegmenter:
                     px, py = pt[0][0], pt[0][1]
                     polygon_coords.append([round(float(px) / w, 6), round(float(py) / h, 6)])
 
+            if scale != 1.0:
+                scaled_box = [round(c / scale, 2) for c in inst["box"]]
+            else:
+                scaled_box = inst["box"]
+
             instances.append({
                 "id": len(instances) + 1,
                 "class_id": cls_idx,
                 "class_name": cls_name,
                 "score": round(inst["score"], 4),
-                "box": inst["box"],
+                "box": scaled_box,
                 "polygon": polygon_coords
             })
 
@@ -321,16 +340,48 @@ class UrbanSceneSegmenter:
         mask_path = os.path.join(base_dir, f"{base_name}_urban_mask.png")
         vis_path = os.path.join(base_dir, f"{base_name}_urban_mask_vis.png")
 
-        cv2.imwrite(seg_path, overlay_bgr)
-        cv2.imwrite(mask_path, categorical_mask)
+        if scale != 1.0:
+            final_mask = cv2.resize(categorical_mask, (orig_w, orig_h), interpolation=cv2.INTER_NEAREST)
+            final_overlay = cv2.resize(overlay_bgr, (orig_w, orig_h), interpolation=cv2.INTER_AREA)
+        else:
+            final_mask = categorical_mask
+            final_overlay = overlay_bgr
 
-        # Generate visual palette render of categorical mask for easy inspection
-        mask_vis_bgr = np.zeros_like(overlay_bgr)
-        for idx, cls_name in enumerate(self.classes):
-            cls_mask = (categorical_mask == (idx + 1))
-            if np.any(cls_mask):
-                mask_vis_bgr[cls_mask] = self.class_colors[cls_name]
-        cv2.imwrite(vis_path, mask_vis_bgr)
+        if save_overlay:
+            cv2.imwrite(seg_path, final_overlay)
+            # Generate visual palette render of categorical mask for easy inspection
+            mask_vis_bgr = np.zeros_like(final_overlay)
+            for idx, cls_name in enumerate(self.classes):
+                cls_mask = (final_mask == (idx + 1))
+                if np.any(cls_mask):
+                    mask_vis_bgr[cls_mask] = self.class_colors[cls_name]
+            cv2.imwrite(vis_path, mask_vis_bgr)
+
+        if save_mask:
+            cv2.imwrite(mask_path, final_mask)
+
+        # Also save structured urban_segmentations.json inside base_dir if save_mask
+        if save_mask and instances:
+            json_path = os.path.join(base_dir, "urban_segmentations.json")
+            existing_data = []
+            if os.path.exists(json_path):
+                try:
+                    with open(json_path, "r", encoding="utf-8") as f:
+                        existing_data = json.load(f)
+                except Exception:
+                    existing_data = []
+            # Remove any existing entry for this image
+            existing_data = [item for item in existing_data if item.get("image_id") != base_name]
+            existing_data.append({
+                "image_id": base_name,
+                "image_path": image_path,
+                "mask_path": mask_path if save_mask else "",
+                "width": orig_w,
+                "height": orig_h,
+                "instances": instances
+            })
+            with open(json_path, "w", encoding="utf-8") as f:
+                json.dump(existing_data, f, indent=2)
 
         summary = f"Segmented {len(instances)} objects ({', '.join([f'{k}: {v}' for k, v in class_counts.items() if v > 0])}) -> Saved {os.path.basename(seg_path)} & {os.path.basename(mask_path)}"
         return instances, summary
