@@ -40,12 +40,13 @@ cd SurfLifeGen-MLX
 pip install -e .
 ```
 
-This installs five global command-line tools into your environment:
+This installs six global command-line tools into your environment:
 1. `surflifegen`: Main Cosmos 3 MLX dataset generator with Grounding DINO annotation (`--target swimmer` | `--target shark`).
 2. `surflifegen-highalt`: Specialized high-altitude (`100m-400m`) active swimmer scene synthesizer.
 3. `surflifegen-highway`: Dedicated highway pavement defect generator with **Grounded-SAM** precision polygon mask segmentation.
 4. `surflifegen-segment`: Standalone Grounded-SAM (`Grounding DINO + Segment Anything`) zero-shot polygon mask segmenter for any existing road/defect dataset.
-5. `surflifegen-verify`: Apple Silicon MLX Qwen3-VL automated bounding box audit & correction tool.
+5. `surflifegen-yolo-export`: One-click dataset exporter converting synthetic/real annotations into Ultralytics `YOLOv8`/`YOLOv11` ready formats (`images/`, `labels/`, `data.yaml`) for both real-time Object Detection and Instance Segmentation.
+6. `surflifegen-verify`: Apple Silicon MLX Qwen3-VL automated bounding box audit & correction tool.
 
 ---
 
@@ -200,6 +201,16 @@ surflifegen-highalt \
 | `--prompt` | `-p` | `'crack in asphalt . pothole . road edge .'` | Dot-separated localization queries before SAM mask generation |
 | `--box-threshold` | `--box-thresh` | `0.22` | Detection confidence threshold before mask creation |
 | `--sam-model-id` | | `'facebook/sam-vit-base'` | HuggingFace model ID for Segment Anything (running natively on Apple Silicon MPS) |
+
+### `surflifegen-yolo-export` Options (Ultralytics YOLOv8/YOLOv11 Dataset Exporter):
+
+| Flag | Shortcut | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `--dataset-dir` | `-d` | Required | Path to input directory (`surflifegen`, `surflifegen-highalt`, or `surflifegen-highway`) |
+| `--output-dir` | `-o` | `./yolo_dataset` | Destination folder for `images/`, `labels/`, and `data.yaml` |
+| `--split-ratio` | `-s` | `0.8` | Train vs Validation split ratio (e.g. `0.8` = 80% train / 20% val) |
+| `--mode` | `-m` | `auto` | `detect` (boxes), `segment` (polygon masks), or `auto` |
+| `--symlink` | | `False` | Use symlinks instead of copying `.png` images to conserve disk space |
 
 ---
 
