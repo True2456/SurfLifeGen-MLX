@@ -19,6 +19,7 @@ setup(
         "console_scripts": [
             "surflifegen=surflifegen.cli:main",
             "surflifegen-verify=surflifegen.verify_cli:main",
+            "surflifegen-dino=surflifegen.dino_cli:main",
         ],
     },
     python_requires=">=3.10",
