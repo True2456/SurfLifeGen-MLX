@@ -27,6 +27,7 @@ setup(
             "surflifegen-urban-live=surflifegen.urban_live_cli:main",
             "surflifegen-train-yolo=surflifegen.train_urban_yolo:main",
             "surflifegen-yolo-export=surflifegen.yolo_cli:main",
+            "surflifegen-web=surflifegen.web_cli:main",
         ],
     },
     python_requires=">=3.10",
