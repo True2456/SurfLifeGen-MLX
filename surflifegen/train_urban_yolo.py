@@ -249,8 +249,10 @@ def main():
     args = parser.parse_args()
 
     video_path = args.video
-    if video_path is None:
-        # Check ./videos for latest video
+    if video_path == "" or video_path == "None" or video_path == "none":
+        video_path = None
+    elif not video_path:
+        # Check ./videos/ directory for latest video
         repo_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         video_dir = os.path.join(repo_dir, "videos")
         if os.path.exists(video_dir):
@@ -258,6 +260,10 @@ def main():
             if v_files:
                 video_path = max(v_files, key=os.path.getmtime)
                 print(f"[surflifegen-train-yolo] Auto-selected latest video: '{os.path.basename(video_path)}'")
+            else:
+                video_path = None
+        else:
+            video_path = None
 
     classes_list = [c.strip() for c in args.classes.split(",") if c.strip()]
 
