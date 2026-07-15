@@ -223,6 +223,43 @@ def save_settings_endpoint(settings: SettingsModel):
     save_settings(settings.dict())
     return {"status": "success", "settings": get_settings()}
 
+@app.get("/api/settings/synonyms")
+def get_synonyms_endpoint():
+    synonyms_path = os.path.join(REPO_DIR, "synonyms.json")
+    if not os.path.exists(synonyms_path):
+        # Return default mappings
+        default_syns = {
+            "building": ["building", "buildings", "roof", "apartment", "house", "structure", "rooftop"],
+            "road": ["road", "roads", "street", "highway", "asphalt", "pavement", "intersection", "lane"],
+            "grass": ["grass", "lawn", "vegetation", "shrub", "bush", "greenery", "landscape", "field", "plant"],
+            "car": ["car", "cars", "vehicle", "vehicles", "truck", "van", "bus", "suv", "automobile"],
+            "person": ["person", "people", "pedestrian", "pedestrians", "human"],
+            "tree": ["tree", "trees", "canopy", "palm tree", "foliage", "forest"],
+            "edge of road": ["edge of road", "edge of roads", "road edge", "curb", "curbs", "shoulder", "road boundary"],
+            "sidewalk": ["sidewalk", "sidewalks", "pavement walkway", "footpath", "pedestrian path", "crosswalk"]
+        }
+        with open(synonyms_path, "w", encoding="utf-8") as f:
+            json.dump(default_syns, f, indent=2)
+    try:
+        with open(synonyms_path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/settings/synonyms")
+def save_synonyms_endpoint(payload: Dict[str, List[str]]):
+    global _cached_segmenter
+    synonyms_path = os.path.join(REPO_DIR, "synonyms.json")
+    try:
+        with open(synonyms_path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2)
+        # Clear segmenter cache so it loads the new synonyms
+        if _cached_segmenter is not None:
+            _cached_segmenter.synonyms = payload
+        return {"status": "success", "synonyms": payload}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 # System Status API
 @app.get("/api/status")
 def get_status():

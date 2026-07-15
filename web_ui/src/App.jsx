@@ -79,11 +79,16 @@ function App() {
   const [sandboxInstances, setSandboxInstances] = useState([]);
   const [sandboxLoading, setSandboxLoading] = useState(false);
 
+  // Synonyms settings states
+  const [synonyms, setSynonyms] = useState({});
+  const [newSynInputs, setNewSynInputs] = useState({});
+
   // Load configuration on boot
   useEffect(() => {
     fetchStatus();
     fetchSettings();
     fetchJobs();
+    fetchSynonyms();
     exploreDirectory('');
 
     const interval = setInterval(() => {
@@ -132,6 +137,16 @@ function App() {
     }
   };
 
+  const fetchSynonyms = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/settings/synonyms`);
+      const data = await res.json();
+      setSynonyms(data);
+    } catch (e) {
+      console.error("Error fetching synonyms mapping", e);
+    }
+  };
+
   const saveSettings = async (newSettings) => {
     try {
       const res = await fetch(`${API_BASE}/api/settings`, {
@@ -144,6 +159,23 @@ function App() {
       alert("Settings saved successfully!");
     } catch (e) {
       alert("Failed to save settings: " + e.message);
+    }
+  };
+
+  const saveSynonyms = async (newSyns) => {
+    try {
+      const res = await fetch(`${API_BASE}/api/settings/synonyms`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newSyns)
+      });
+      const data = await res.json();
+      if (data.status === 'success') {
+        setSynonyms(data.synonyms);
+        alert("Synonym mappings saved and cached successfully!");
+      }
+    } catch (e) {
+      alert("Failed to save synonyms: " + e.message);
     }
   };
 
@@ -1012,52 +1044,137 @@ function App() {
         {activeTab === 'settings' && (
           <div>
             <div style={{ marginBottom: '32px' }}>
-              <h1 style={{ fontSize: '2rem', marginBottom: '8px' }}>Global Settings Directory Config</h1>
-              <p style={{ color: 'var(--text-secondary)' }}>Manage path parameters and default values for SurfLifeGen dataset directories.</p>
+              <h1 style={{ fontSize: '2rem', marginBottom: '8px' }}>Global Settings & Taxonomy Config</h1>
+              <p style={{ color: 'var(--text-secondary)' }}>Manage path parameters and DINO-to-SAM class synonyms map dictionary.</p>
             </div>
 
-            <div className="card" style={{ maxWidth: '600px' }}>
-              <div className="card-title"><Settings size={20} color="var(--accent-blue)" /> System Folders</div>
-              
-              <div className="form-group">
-                <label>Default Swimmers/Sharks Output Dir</label>
-                <input type="text" className="form-control" value={settings.output_dir} onChange={(e) => setSettings({...settings, output_dir: e.target.value})} />
-              </div>
-
-              <div className="form-group">
-                <label>Default Highway Wear Output Dir</label>
-                <input type="text" className="form-control" value={settings.highway_output_dir} onChange={(e) => setSettings({...settings, highway_output_dir: e.target.value})} />
-              </div>
-
-              <div className="form-group">
-                <label>Default YOLO Training Dataset Dir</label>
-                <input type="text" className="form-control" value={settings.yolo_dataset_dir} onChange={(e) => setSettings({...settings, yolo_dataset_dir: e.target.value})} />
-              </div>
-
-              <div className="grid-2">
+            <div className="grid-2">
+              {/* Left Column: Folders */}
+              <div className="card">
+                <div className="card-title"><Settings size={20} color="var(--accent-blue)" /> System Folders</div>
+                
                 <div className="form-group">
-                  <label>Default Training Epochs</label>
-                  <input type="number" className="form-control" value={settings.epochs} onChange={(e) => setSettings({...settings, epochs: parseInt(e.target.value) || 10})} />
+                  <label>Default Swimmers/Sharks Output Dir</label>
+                  <input type="text" className="form-control" value={settings.output_dir} onChange={(e) => setSettings({...settings, output_dir: e.target.value})} />
                 </div>
+
                 <div className="form-group">
-                  <label>Default Training Batch Size</label>
-                  <input type="number" className="form-control" value={settings.batch_size} onChange={(e) => setSettings({...settings, batch_size: parseInt(e.target.value) || 8})} />
+                  <label>Default Highway Wear Output Dir</label>
+                  <input type="text" className="form-control" value={settings.highway_output_dir} onChange={(e) => setSettings({...settings, highway_output_dir: e.target.value})} />
                 </div>
+
+                <div className="form-group">
+                  <label>Default YOLO Training Dataset Dir</label>
+                  <input type="text" className="form-control" value={settings.yolo_dataset_dir} onChange={(e) => setSettings({...settings, yolo_dataset_dir: e.target.value})} />
+                </div>
+
+                <div className="grid-2">
+                  <div className="form-group">
+                    <label>Default Training Epochs</label>
+                    <input type="number" className="form-control" value={settings.epochs} onChange={(e) => setSettings({...settings, epochs: parseInt(e.target.value) || 10})} />
+                  </div>
+                  <div className="form-group">
+                    <label>Default Training Batch Size</label>
+                    <input type="number" className="form-control" value={settings.batch_size} onChange={(e) => setSettings({...settings, batch_size: parseInt(e.target.value) || 8})} />
+                  </div>
+                </div>
+
+                <div className="form-group">
+                  <label>Default Diffusion Steps</label>
+                  <input type="number" className="form-control" value={settings.steps} onChange={(e) => setSettings({...settings, steps: parseInt(e.target.value) || 25})} />
+                </div>
+
+                <div className="form-group">
+                  <label>Default Segmentation Classes</label>
+                  <input type="text" className="form-control" value={settings.classes} onChange={(e) => setSettings({...settings, classes: e.target.value})} />
+                </div>
+
+                <button className="btn btn-primary" style={{ width: '100%', marginTop: '16px' }} onClick={() => saveSettings(settings)}>
+                  Save Config Settings
+                </button>
               </div>
 
-              <div className="form-group">
-                <label>Default Diffusion Steps</label>
-                <input type="number" className="form-control" value={settings.steps} onChange={(e) => setSettings({...settings, steps: parseInt(e.target.value) || 25})} />
-              </div>
+              {/* Right Column: Synonym Editor */}
+              <div className="card" style={{ display: 'flex', flexDirection: 'column', maxHeight: '720px', overflowY: 'auto' }}>
+                <div className="card-title"><Sliders size={20} color="var(--accent-purple)" /> DINO Class Synonym Mappings</div>
+                <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '16px' }}>
+                  Map raw Grounding DINO text detection queries (e.g. "rooftop", "asphalt") to your target YOLO dataset categories.
+                </p>
+                
+                {Object.keys(synonyms).map(clsName => (
+                  <div key={clsName} style={{ marginBottom: '18px', paddingBottom: '10px', borderBottom: '1px solid var(--card-border)' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                      <span style={{ fontWeight: '600', fontSize: '0.85rem', color: 'var(--accent-blue)' }}>{clsName.toUpperCase()}</span>
+                      <div style={{ display: 'flex', gap: '6px' }}>
+                        <input 
+                          type="text" 
+                          placeholder="Add keyword..." 
+                          className="form-control" 
+                          style={{ padding: '4px 8px', fontSize: '0.75rem', width: '120px' }}
+                          value={newSynInputs[clsName] || ''}
+                          onChange={(e) => setNewSynInputs({...newSynInputs, [clsName]: e.target.value})}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              const val = newSynInputs[clsName]?.trim().toLowerCase();
+                              if (val && !synonyms[clsName].includes(val)) {
+                                const updated = { ...synonyms, [clsName]: [...synonyms[clsName], val] };
+                                setSynonyms(updated);
+                                setNewSynInputs({...newSynInputs, [clsName]: ''});
+                              }
+                            }
+                          }}
+                        />
+                        <button 
+                          className="btn btn-secondary" 
+                          style={{ padding: '4px 8px', fontSize: '0.75rem' }}
+                          onClick={() => {
+                            const val = newSynInputs[clsName]?.trim().toLowerCase();
+                            if (val && !synonyms[clsName].includes(val)) {
+                              const updated = { ...synonyms, [clsName]: [...synonyms[clsName], val] };
+                              setSynonyms(updated);
+                              setNewSynInputs({...newSynInputs, [clsName]: ''});
+                            }
+                          }}
+                        >
+                          Add
+                        </button>
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                      {synonyms[clsName].map(keyword => (
+                        <span 
+                          key={keyword} 
+                          className="badge" 
+                          style={{ 
+                            display: 'inline-flex', 
+                            alignItems: 'center', 
+                            gap: '4px',
+                            background: 'rgba(255,255,255,0.03)',
+                            border: '1px solid var(--card-border)'
+                          }}
+                        >
+                          {keyword}
+                          <button 
+                            type="button"
+                            style={{ background: 'none', border: 'none', color: 'var(--status-failed)', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 'bold' }}
+                            onClick={() => {
+                              const filtered = synonyms[clsName].filter(k => k !== keyword);
+                              setSynonyms({ ...synonyms, [clsName]: filtered });
+                            }}
+                          >
+                            ×
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                ))}
 
-              <div className="form-group">
-                <label>Default Segmentation Classes</label>
-                <input type="text" className="form-control" value={settings.classes} onChange={(e) => setSettings({...settings, classes: e.target.value})} />
+                <button className="btn btn-primary" style={{ width: '100%', marginTop: 'auto' }} onClick={() => saveSynonyms(synonyms)}>
+                  Save Synonym Mappings
+                </button>
               </div>
-
-              <button className="btn btn-primary" style={{ width: '100%', marginTop: '16px' }} onClick={() => saveSettings(settings)}>
-                Save Config Settings
-              </button>
             </div>
           </div>
         )}
