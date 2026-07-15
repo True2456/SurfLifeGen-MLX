@@ -1,0 +1,78 @@
+{
+  "building": [
+    "building",
+    "buildings",
+    "roof",
+    "apartment",
+    "house",
+    "structure",
+    "rooftop"
+  ],
+  "road": [
+    "road",
+    "roads",
+    "street",
+    "highway",
+    "asphalt",
+    "pavement",
+    "intersection",
+    "lane"
+  ],
+  "grass": [
+    "grass",
+    "lawn",
+    "vegetation",
+    "shrub",
+    "bush",
+    "greenery",
+    "landscape",
+    "field",
+    "plant"
+  ],
+  "car": [
+    "car",
+    "cars",
+    "vehicle",
+    "vehicles",
+    "truck",
+    "van",
+    "bus",
+    "suv",
+    "automobile"
+  ],
+  "person": [
+    "person",
+    "people",
+    "pedestrian",
+    "pedestrians",
+    "human"
+  ],
+  "tree": [
+    "tree",
+    "trees",
+    "canopy",
+    "palm tree",
+    "foliage",
+    "forest"
+  ],
+  "edge of road": [
+    "edge of road",
+    "edge of roads",
+    "road edge",
+    "curb",
+    "curbs",
+    "shoulder",
+    "road boundary"
+  ],
+  "sidewalk": [
+    "sidewalk",
+    "sidewalks",
+    "pavement walkway",
+    "footpath",
+    "pedestrian path",
+    "crosswalk"
+  ],
+  "pothole": [
+    "pothole"
+  ]
+}
